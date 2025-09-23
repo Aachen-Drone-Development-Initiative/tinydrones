@@ -26,8 +26,8 @@ void esp_now_setup() {
     esp_now_recv_queue = xQueueCreate(ESP_NOW_QUEUE_LENGTH, sizeof(ESPnow_Packet));
 }
 
-Dongle_Connection advertise_drone(int64_t interval_ms) {
-    Dongle_Connection connection = {};
+ESPnow_Controller_Connection advertise_drone(int64_t interval_ms) {
+    ESPnow_Controller_Connection connection = {};
     // Register Broadcast MAC Address
     esp_now_peer_info_t peerInfo = {};
     if (esp_now_get_peer(BROADCAST_MAC_ADDR, &peerInfo) == ESP_ERR_ESPNOW_NOT_FOUND) {
@@ -46,7 +46,7 @@ Dongle_Connection advertise_drone(int64_t interval_ms) {
         if (xQueueReceive(esp_now_recv_queue, buf, interval_ms/portTICK_PERIOD_MS) == pdTRUE) {
             ESP_LOGI("advertisement", "Advertisement answered: %d", buf->payload[0]);
             if (!is_broadcast_addr(buf->des_mac_addr)) {
-                // Maybe check here for a specific message from the dongle
+                // Maybe check here for a specific message from the espnow controller
                 ESP_LOGI("advertisement", "Advertisement answer accepted!");
                 break;
             }
@@ -65,3 +65,4 @@ Dongle_Connection advertise_drone(int64_t interval_ms) {
     xQueueReset(esp_now_recv_queue);
     return connection;
 }
+

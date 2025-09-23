@@ -7,7 +7,7 @@
 #include "freertos/FreeRTOS.h"
 #include "esp_log.h"
 
-static QueueHandle_t esp_now_recv_queue; // Queue for incoming packets
+static QueueHandle_t s_esp_now_recv_queue; // Queue for incoming packets
 
 typedef struct {
     uint8_t src_mac_addr[6];
@@ -19,7 +19,7 @@ typedef struct {
 typedef struct {
     uint8_t mac_addr[6];
     bool connected;
-} Dongle_Connection;
+} ESPnow_Controller_Connection;
 
 /// @brief initialize ESP-NOW
 /// Must be called after esp_wifi_init()
@@ -27,10 +27,10 @@ typedef struct {
 void esp_now_setup();
 
 /// @brief Enable drone advertisement
-/// Blocks and sends out drone advertisement until dongle accepts.
+/// Blocks and sends out drone advertisement until espnow controller accepts.
 /// Adds a peer with the broadcast MAC address if not already added.
 /// @param interval_ms Interval in milliseconds between advertisements
-Dongle_Connection advertise_drone(int64_t interval_ms);
+ESPnow_Controller_Connection advertise_drone(int64_t interval_ms);
 
 /// @brief Checks if addr is broadcast address
 bool is_broadcast_addr(uint8_t *addr);

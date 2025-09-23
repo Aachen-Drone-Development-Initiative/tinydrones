@@ -26,13 +26,13 @@
 #define ADVERTISEMENT_INTERVAL_MS 1000
 
 typedef struct {
-    bool dongle_connected;
-    int dongle_mac[6];
+    bool espnow_controller_connected;
+    int espnow_controller_mac[6];
 } Drone_Status;
 
 static Drone_Status drone_status = {
-    .dongle_connected = false,
-    .dongle_mac = {0, 0, 0, 0, 0, 0}
+    .espnow_controller_connected = false,
+    .espnow_controller_mac = {0, 0, 0, 0, 0, 0}
 };
 
 void nvs_init() {
@@ -89,10 +89,10 @@ void app_main(void)
     peerInfo.ifidx = WIFI_IF_STA;
     ESP_ERROR_CHECK(esp_now_add_peer(&peerInfo));
 
-    // Connect to dongle
-    Dongle_Connection connection = advertise_drone(ADVERTISEMENT_INTERVAL_MS);
-    drone_status.dongle_connected = true;
-    memcpy(drone_status.dongle_mac, connection.mac_addr, 6);
+    // Connect to espnow controller
+    ESPnow_Controller_Connection connection = advertise_drone(ADVERTISEMENT_INTERVAL_MS);
+    drone_status.espnow_controller_connected = connection.connected;
+    memcpy(drone_status.espnow_controller_mac, connection.mac_addr, 6);
 
 
     // Main loop: read MPU6050 data and send via ESP-NOW
