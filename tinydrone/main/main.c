@@ -14,19 +14,26 @@
 #include "freertos/task.h"
 #include "driver/usb_serial_jtag.h"
 #include "sdkconfig.h"
+
 #include "MPU6050.h"
+#include "esp_now_interface.h"
 
 #include <stdio.h>
 #include <string.h>
 
 #define I2C_MASTER_SDA_IO GPIO_NUM_11 // GPIO number for I2C SDA
 #define I2C_MASTER_SCL_IO GPIO_NUM_10 // GPIO number for I2C SCL
+#define ADVERTISEMENT_INTERVAL_MS 1000
 
 typedef struct {
-    uint8_t src_mac_addr[6]; // Source MAC
-    uint8_t payload[ESP_NOW_MAX_DATA_LEN_V2];
-    size_t len;
-} espnow_packet_t;
+    bool dongle_connected;
+    int dongle_mac[6];
+} Drone_Status;
+
+static Drone_Status drone_status = {
+    .dongle_connected = false,
+    .dongle_mac = {0, 0, 0, 0, 0, 0}
+};
 
 void nvs_init() {
     esp_err_t ret = nvs_flash_init();
@@ -69,12 +76,10 @@ void app_main(void)
     MPU6050_Handle mpu = mpu6050_init(master_bus, MPU6050_PLUS_MINUS_500_DEG_PER_SECOND, MPU6050_PLUS_MINUS_2G);
     if (mpu.i2c_handle == NULL) return;
 
-    // ESP NOW
-
     // Initialize NVS, Wi-Fi and ESP-NOW
     nvs_init();
     minimal_wifi_init();
-    ESP_ERROR_CHECK(esp_now_init());
+    esp_now_setup();
 
     // Register Broadcast MAC Address
     esp_now_peer_info_t peerInfo = {};
@@ -84,8 +89,14 @@ void app_main(void)
     peerInfo.ifidx = WIFI_IF_STA;
     ESP_ERROR_CHECK(esp_now_add_peer(&peerInfo));
 
-    espnow_packet_t* packet = malloc(sizeof(espnow_packet_t));
-    
+    // Connect to dongle
+    Dongle_Connection connection = advertise_drone(ADVERTISEMENT_INTERVAL_MS);
+    drone_status.dongle_connected = true;
+    memcpy(drone_status.dongle_mac, connection.mac_addr, 6);
+
+
+    // Main loop: read MPU6050 data and send via ESP-NOW
+    ESPnow_Packet* packet = malloc(sizeof(ESPnow_Packet));
     while (true)
     {
         MPU6050_Data mpu_data = mpu6050_get_data(mpu);
