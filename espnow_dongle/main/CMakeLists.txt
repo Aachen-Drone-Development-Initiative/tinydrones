@@ -1,0 +1,9 @@
+idf_component_register(SRCS "main.c"
+  INCLUDE_DIRS "."
+  # for esp-now
+  PRIV_REQUIRES nvs_flash
+  PRIV_REQUIRES esp_event
+  PRIV_REQUIRES esp_netif
+  PRIV_REQUIRES esp_wifi
+)
+
