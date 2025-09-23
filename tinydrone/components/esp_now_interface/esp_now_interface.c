@@ -14,7 +14,7 @@ void esp_now_cb(const esp_now_recv_info_t *recieved_packet, const uint8_t *data,
     memcpy(packet.payload, data, data_len);
     packet.len = data_len;
 
-    xQueueSend(esp_now_recv_queue, &packet, 0);
+    xQueueSend(s_esp_now_recv_queue, &packet, 0);
 }
 
 bool is_broadcast_addr(uint8_t* addr) {
@@ -23,7 +23,7 @@ bool is_broadcast_addr(uint8_t* addr) {
 
 void esp_now_setup() {
     ESP_ERROR_CHECK(esp_now_init());
-    esp_now_recv_queue = xQueueCreate(ESP_NOW_QUEUE_LENGTH, sizeof(ESPnow_Packet));
+    s_esp_now_recv_queue = xQueueCreate(ESP_NOW_QUEUE_LENGTH, sizeof(ESPnow_Packet));
 }
 
 ESPnow_Controller_Connection advertise_drone(int64_t interval_ms) {
@@ -43,7 +43,7 @@ ESPnow_Controller_Connection advertise_drone(int64_t interval_ms) {
     
     ESPnow_Packet* buf = malloc(sizeof(ESPnow_Packet));
     while (!connection.connected) {
-        if (xQueueReceive(esp_now_recv_queue, buf, interval_ms/portTICK_PERIOD_MS) == pdTRUE) {
+        if (xQueueReceive(s_esp_now_recv_queue, buf, interval_ms/portTICK_PERIOD_MS) == pdTRUE) {
             ESP_LOGI("advertisement", "Advertisement answered: %d", buf->payload[0]);
             if (!is_broadcast_addr(buf->des_mac_addr)) {
                 // Maybe check here for a specific message from the espnow controller
@@ -62,7 +62,7 @@ ESPnow_Controller_Connection advertise_drone(int64_t interval_ms) {
     memcpy(connection.mac_addr, buf->src_mac_addr, 6);
 
     free(buf);
-    xQueueReset(esp_now_recv_queue);
+    xQueueReset(s_esp_now_recv_queue);
     return connection;
 }
 
