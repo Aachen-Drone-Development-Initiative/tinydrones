@@ -6,14 +6,15 @@
 #include "esp_now.h"
 #include "freertos/FreeRTOS.h"
 #include "esp_log.h"
+#include "../../../../shared_types/drone_and_controller_communication_types.h"
 
-static QueueHandle_t s_esp_now_recv_queue; // Queue for incoming packets
+static QueueHandle_t s_esp_now_queue; // Queue for espnow packets
 
 typedef struct {
     uint8_t src_mac_addr[6];
     uint8_t des_mac_addr[6];
-    uint8_t payload[ESP_NOW_MAX_DATA_LEN_V2];
-    size_t len;
+    uint8_t len;
+    uint8_t* data;
 } ESPnow_Packet;
 
 typedef struct {
@@ -26,7 +27,7 @@ typedef struct {
 /// Creates the receive queue
 void esp_now_setup();
 
-/// @brief Enable drone advertisement
+/// @brief Advertise Drone to Controller
 /// Blocks and sends out drone advertisement until espnow controller accepts.
 /// Adds a peer with the broadcast MAC address if not already added.
 /// @param interval_ms Interval in milliseconds between advertisements
@@ -35,3 +36,19 @@ ESPnow_Controller_Connection advertise_drone(int64_t interval_ms);
 /// @brief Checks if addr is broadcast address
 bool is_broadcast_addr(uint8_t *addr);
 
+/// @brief Abstraction of ESPNOW send to packages
+/// @param mac_addr 
+/// @param package 
+void send_package_espnow(uint8_t *mac_addr, Package *package);
+
+/// @brief Abstracts ESPNOW packets into Packages
+/// Mainly for internal component use
+/// @param packet Pointer to ESPNOW packet
+/// @param package Pointer to Package
+void espnow_packet_parse(ESPnow_Packet *packet, Package *package);
+
+/// @brief Converts Packages into ESPNOW packets
+/// Mainly for internal component use
+/// @param packet Pointer to ESPNOW packet
+/// @param package Pointer to Package
+// void package_to_espnow_packet(ESPnow_Packet *packet, Package *package);
