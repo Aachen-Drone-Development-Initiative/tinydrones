@@ -90,7 +90,8 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_now_add_peer(&peerInfo));
 
     // Connect to espnow controller
-    ESPnow_Controller_Connection connection = advertise_drone(ADVERTISEMENT_INTERVAL_MS);
+    ESPnow_Controller_Connection connection;
+    advertise_drone_espnow(&connection, ADVERTISEMENT_INTERVAL_MS);
     drone_status.espnow_controller_connected = connection.connected;
     memcpy(drone_status.espnow_controller_mac, connection.mac_addr, 6);
 
@@ -102,8 +103,8 @@ void app_main(void)
         MPU6050_Data mpu_data = mpu6050_get_data(mpu);
 
         packet->len = sizeof(mpu_data);
-        memcpy(packet->payload, &mpu_data, sizeof(mpu_data));
-        esp_now_send((uint8_t[]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, packet->payload, packet->len);
+        memcpy(packet->data, &mpu_data, sizeof(mpu_data));
+        esp_now_send((uint8_t[]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, packet->data, packet->len);
         
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }

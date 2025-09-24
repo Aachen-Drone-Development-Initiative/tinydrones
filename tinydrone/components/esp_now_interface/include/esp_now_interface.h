@@ -8,8 +8,6 @@
 #include "esp_log.h"
 #include "../../../../shared_types/drone_and_controller_communication_types.h"
 
-static QueueHandle_t s_esp_now_queue; // Queue for espnow packets
-
 typedef struct {
     uint8_t src_mac_addr[6];
     uint8_t des_mac_addr[6];
@@ -30,8 +28,9 @@ void esp_now_setup();
 /// @brief Advertise Drone to Controller
 /// Blocks and sends out drone advertisement until espnow controller accepts.
 /// Adds a peer with the broadcast MAC address if not already added.
+/// @param connection Struct for new connection
 /// @param interval_ms Interval in milliseconds between advertisements
-ESPnow_Controller_Connection advertise_drone(int64_t interval_ms);
+void advertise_drone_espnow(ESPnow_Controller_Connection* connection, int64_t interval_ms);
 
 /// @brief Checks if addr is broadcast address
 bool is_broadcast_addr(uint8_t *addr);

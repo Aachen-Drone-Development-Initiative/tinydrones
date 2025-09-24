@@ -2,6 +2,9 @@
 
 #define BROADCAST_MAC_ADDR (uint8_t[]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
 #define ESP_NOW_QUEUE_LENGTH 10
+#define DEFAULT_ESPNOW_CHANNEL 0
+
+static QueueHandle_t s_esp_now_queue; // Queue for espnow packets
 
 void esp_now_cb(const esp_now_recv_info_t *recieved_packet, const uint8_t *data, int data_len) {
     ESPnow_Packet espnow_packet;
@@ -34,44 +37,42 @@ void send_package_espnow(uint8_t *mac_addr, Package *package) {
     int16_t size;
     switch (package->type) {
         case PKG_D2C_ADVERTISE:
-            size = sizeof(Payload_Request_Connection);
+            size = sizeof(Package_Request_Connection);
             break;
         case PKG_D2C_IMU_DATA:
-            size = sizeof(Payload_Imu_Data);
+            size = sizeof(Package_Imu_Data);
             break;
         case PKG_C2D_ACCEPT_ADVERTISEMENT:
-            size = sizeof(Payload_Accept_Connection);
+            size = sizeof(Package_Accept_Connection);
             break;
         case PKG_C2D_CONTROLL_COMMANDS:
-            size = sizeof(Payload_Controller_Commands);
+            size = sizeof(Package_Controller_Commands);
             break;
         default:
             ESP_LOGE("espnow-send", "Unknown package type: %d", package->type);
             return;
     }
-    esp_now_send(mac_addr, package, size);
+    ESP_LOGD("espnow-send", "Sending package of type %d, size %d", package->type, size);
+    ESP_ERROR_CHECK(esp_now_send(mac_addr, (uint8_t *)package, size));
 }
 
-ESPnow_Controller_Connection advertise_drone(int64_t interval_ms) {
-    ESPnow_Controller_Connection connection = {};
+void advertise_drone_espnow(ESPnow_Controller_Connection *connection, int64_t interval_ms) {
     // Register Broadcast MAC Address
     esp_now_peer_info_t peerInfo = {};
-    bool keep_broadcast_peer = true;
     if (esp_now_get_peer(BROADCAST_MAC_ADDR, &peerInfo) == ESP_ERR_ESPNOW_NOT_FOUND) {
-        keep_broadcast_peer = false;
-        peerInfo.channel = 0;
+        peerInfo.channel = DEFAULT_ESPNOW_CHANNEL;
         peerInfo.encrypt = false;
         memcpy(peerInfo.peer_addr, BROADCAST_MAC_ADDR, 6); 
         peerInfo.ifidx = WIFI_IF_STA;
         ESP_ERROR_CHECK(esp_now_add_peer(&peerInfo));
     } 
 
-    connection.connected = false;
+    connection->connected = false;
     ESP_ERROR_CHECK(esp_now_register_recv_cb(esp_now_cb));
     
     ESPnow_Packet* buf = malloc(sizeof(ESPnow_Packet));
 
-    while (!connection.connected) {
+    while (!connection->connected) {
         // Send broadcast message
         ESP_LOGI("advertisement", "Advertising Drone");
         Package advertisement_package = {};
@@ -95,16 +96,15 @@ ESPnow_Controller_Connection advertise_drone(int64_t interval_ms) {
         }
     }
 
-    connection.connected = true;
-    memcpy(connection.mac_addr, buf->src_mac_addr, 6);
+    connection->connected = true;
+    memcpy(connection->mac_addr, buf->src_mac_addr, 6);
+    memcpy(peerInfo.peer_addr, connection->mac_addr, 6);
+    esp_now_add_peer(&peerInfo);
+
 
     // cleanup
     free(buf);
     xQueueReset(s_esp_now_queue);
-    if (keep_broadcast_peer == false) {
-        ESP_ERROR_CHECK(esp_now_del_peer(BROADCAST_MAC_ADDR));
-    }
-    return connection;
 }
 
 void espnow_packet_parse(ESPnow_Packet *packet, Package *package) {
