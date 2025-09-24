@@ -2,10 +2,9 @@
 
 #include <stdint.h>
 
-// Package: Drone to controller
-
 typedef enum {
-    PKG_D2C_ADVERTISE = 0,
+    PKG_INVALID = 0,
+    PKG_D2C_ADVERTISE,
     PKG_D2C_IMU_DATA,
     
     PKG_C2D_ACCEPT_ADVERTISEMENT,
@@ -16,10 +15,10 @@ typedef struct {
     uint8_t type; // Package_Type enum value
 } __attribute__((packed)) Package;
 
-// type == PKG_D2C_REQUEST_CONNECTION
+// type == PKG_D2C_ADVERTISE
 typedef struct {
     Package pkg;
-} __attribute__((packed)) Package_Request_Connection; // empty payload
+} __attribute__((packed)) Package_D2C_Advertise; // empty payload
 
 // type == PKG_D2C_IMU_DATA
 typedef struct {
@@ -30,10 +29,10 @@ typedef struct {
     float acc_x, acc_y, acc_z;       // unit: m/s^2
 } __attribute__((packed)) Package_Imu_Data;
 
-// type == PKG_C2D_ACCEPT_CONNECTION
+// type == PKG_C2D_ACCEPT_ADVERTISEMENT
 typedef struct {
     Package pkg;
-} __attribute__((packed)) Package_Accept_Connection; // empty payload
+} __attribute__((packed)) Package_C2D_Accept_Advertisement; // empty payload
 
 // type == PKG_C2D_CONTROLL_COMMANDS
 typedef struct {

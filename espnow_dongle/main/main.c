@@ -333,12 +333,12 @@ void dongle_loop()
         {
             if (ui_to_drone.controller_commands.contains_data)
             {
-                Payload_Controller_Commands ctrl_cmds = { 
-                    .pitch = ui_to_drone.controller_commands.pitch,
-                    .yaw = ui_to_drone.controller_commands.yaw,
-                    .roll = ui_to_drone.controller_commands.roll,
-                    .throttle = ui_to_drone.controller_commands.throttle
-                };
+                Package_Controller_Commands* pkg_ctrl_cmds = malloc(sizeof(Package_Controller_Commands));
+                pkg_ctrl_cmds->pkg.type = 
+                pkg_ctrl_cmds->pitch = ui_to_drone.controller_commands.pitch;
+                pkg_ctrl_cmds->yaw = ui_to_drone.controller_commands.yaw;
+                pkg_ctrl_cmds->roll = ui_to_drone.controller_commands.roll;
+                pkg_ctrl_cmds->throttle = ui_to_drone.controller_commands.throttle;
 
                 Package package = {
                     .type = PKG_C2D_CONTROLL_COMMANDS,
