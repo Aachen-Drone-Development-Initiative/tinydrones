@@ -1,25 +1,26 @@
+
+#include "../../shared_types/drone_and_controller_communication_types.h"
+#include "dynamic_array.h"
+
+#include <string.h>
 #include <assert.h>
+#include "esp_log.h"
+#include "sdkconfig.h"
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
 #include "nvs_flash.h"
-#include "esp_random.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
-#include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_now.h"
 #include "esp_crc.h"
 
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "sdkconfig.h"
+#include "driver/usb_serial_jtag.h"
 
-#include "driver/uart.h"
+/* #include "driver/uart.h" */
 /* #include "driver/gpio.h" */
-
-#include <stdio.h>
-#include <string.h>
-
-#include "../../shared_types/drone_and_controller_communication_types.h"
-#include "dynamic_array.h"
 
 #define RECEIVE_CALLBACK_QUEUE_SIZE 10
 #define SEND_CALLBACK_QUEUE_SIZE 10
@@ -29,6 +30,10 @@
 
 #define ESPNOW_WIFI_MODE WIFI_MODE_AP
 #define ESPNOW_WIFI_IF   ESP_IF_WIFI_AP
+
+#define USB_SERIAL_JTAG_BUFFER_SIZE (1024)
+#define USB_SERIAL_WRITE_MAX_TICKS_TO_WAIT (20 / portTICK_PERIOD_MS)
+#define USB_SERIAL_READ_MAX_TICKS_TO_WAIT (20 / portTICK_PERIOD_MS)
 
 static const char *DONGLE_TAG = "espnow_dongle";
 
@@ -72,8 +77,6 @@ typedef struct {
     size_t length;
     uint8_t package_data[0];
 } ESPNow_Package;
-
-typedef uint32_t Device_ID;
 
 typedef struct {
     uint8_t mac_addr[ESP_NOW_ETH_ALEN];
@@ -147,6 +150,8 @@ static void init_nvs()
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK( ret );
+
+    ESP_LOGI(DONGLE_TAG, "NVS init done");
 }
 
 static void init_wifi(uint8_t wifi_channel, bool long_range_mode)
@@ -162,6 +167,8 @@ static void init_wifi(uint8_t wifi_channel, bool long_range_mode)
     if (long_range_mode) {
         ESP_ERROR_CHECK( esp_wifi_set_protocol(ESPNOW_WIFI_IF, WIFI_PROTOCOL_11B|WIFI_PROTOCOL_11G|WIFI_PROTOCOL_11N|WIFI_PROTOCOL_LR) );
     }
+
+    ESP_LOGI(DONGLE_TAG, "WIFI init done");
 }
 
 
@@ -184,23 +191,19 @@ static void init_espnow()
     memcpy(peer->peer_addr, s_broadcast_mac, sizeof(s_broadcast_mac));
     ESP_ERROR_CHECK( esp_now_add_peer(peer) );
     free(peer);
+    
+    ESP_LOGI(DONGLE_TAG, "ESPNOW init done");
 }
 
-void UART0_setup() {
-    uart_config_t uart_config = {
-        .baud_rate           = 115200,
-        .data_bits           = UART_DATA_8_BITS,
-        .parity              = UART_PARITY_DISABLE,
-        .stop_bits           = UART_STOP_BITS_1,
-        .flow_ctrl           = UART_HW_FLOWCTRL_DISABLE,
-        //.rx_flow_ctrl_thresh = 122,
-        //.use_ref_tick        = false,
+static void init_usb_serial_jtag()
+{
+    usb_serial_jtag_driver_config_t usb_serial_jtag_config = {
+        .rx_buffer_size = USB_SERIAL_JTAG_BUFFER_SIZE,
+        .tx_buffer_size = USB_SERIAL_JTAG_BUFFER_SIZE,
     };
 
-    // Configure UART parameters
-    ESP_ERROR_CHECK( uart_param_config(UART_NUM_0, &uart_config) );
-    ESP_ERROR_CHECK( uart_set_pin(UART_NUM_0, 21, 22, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) );
-    ESP_ERROR_CHECK( uart_driver_install(UART_NUM_0, 1024, 0, 0, NULL, 0) );
+    ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&usb_serial_jtag_config));
+    ESP_LOGI(DONGLE_TAG, "USB_SERIAL_JTAG init done");
 }
 
 static void init_dongle()
@@ -208,7 +211,7 @@ static void init_dongle()
     init_nvs();
     init_wifi(ESPNOW_CHANNEL, false);
     init_espnow();
-    UART0_setup();    
+    init_usb_serial_jtag();
 
     // Initialize the dongle state
     
@@ -217,6 +220,8 @@ static void init_dongle()
     
     da_reserve(&dgl.da_detected_esps, 8);
     da_reserve(&dgl.da_connected_esps, 8);
+
+    ESP_LOGI(DONGLE_TAG, "DONGLE Initialized!!!");
 }
 
 /* void espnow_data_prepare(ESPNow_Send_Param *send_param) */
@@ -243,6 +248,8 @@ void dongle_loop()
 {
     while (true)
     {
+        Package_Drone_To_UI drone_to_ui = { 0 };
+        
         ESPNow_Receive_Callback_Info recv_info = { 0 };
         if (xQueueReceive(dgl.espnow_receive_callback_queue, &recv_info, 0))
         {
@@ -280,6 +287,16 @@ void dongle_loop()
                 ESP_LOGI(DONGLE_TAG, "Received imu-data package:");
                 ESP_LOGI(DONGLE_TAG, "imu_data: %ld, %f, %f, %f, %f, %f, %f",
                          imu_data.time_us, imu_data.acc_x, imu_data.acc_y, imu_data.acc_z, imu_data.omega_x, imu_data.omega_y, imu_data.omega_z);
+                
+                drone_to_ui.imu.time_us = imu_data.time_us;
+                drone_to_ui.imu.acc_x = imu_data.acc_x;
+                drone_to_ui.imu.acc_y = imu_data.acc_y;
+                drone_to_ui.imu.acc_z = imu_data.acc_z;
+                drone_to_ui.imu.omega_x = imu_data.omega_x;
+                drone_to_ui.imu.omega_y = imu_data.omega_y;
+                drone_to_ui.imu.omega_z = imu_data.omega_z;
+                drone_to_ui.imu.contains_data = true;
+                
                 break;
                 
             default:
@@ -300,7 +317,7 @@ void dongle_loop()
             }
         }
 
-        // Communicate with all connected devices
+        // Communicate with all connected esp devices
 
         for (int i = 0; i < dgl.da_connected_esps.count; ++i) {
             /* if (esp_now_send(send_param->dest_mac, send_param->buffer, send_param->length) != ESP_OK) { */
@@ -308,8 +325,43 @@ void dongle_loop()
             /* }             */
         }
 
-        uart_write_bytes(UART_NUM_0, "hellope\n", strlen("hellope\n"));
-        
+        // Receive UI-to-Drone Package
+
+        Package_UI_To_Drone ui_to_drone = { 0 };
+        int bytes_read =  usb_serial_jtag_read_bytes(&ui_to_drone, sizeof(Package_UI_To_Drone), USB_SERIAL_READ_MAX_TICKS_TO_WAIT);
+        if (bytes_read != sizeof(Package_UI_To_Drone))
+        {
+            if (ui_to_drone.controller_commands.contains_data)
+            {
+                Payload_Controller_Commands ctrl_cmds = { 
+                    .pitch = ui_to_drone.controller_commands.pitch,
+                    .yaw = ui_to_drone.controller_commands.yaw,
+                    .roll = ui_to_drone.controller_commands.roll,
+                    .throttle = ui_to_drone.controller_commands.throttle
+                };
+
+                Package package = {
+                    .type = PKG_C2D_CONTROLL_COMMANDS,
+                    .payload = ,
+                };
+
+                memcpy(ctrl_cmds, package.payload, sizeof(Payload_Controller_Commands));
+
+                if (esp_now_send(send_param->dest_mac, &package, send_param->length) != ESP_OK) {
+                    ESP_LOGE(DONGLE_TAG, "Send package error");
+                }
+            }
+        }
+        else {
+            ESP_LOGW(DONGLE_TAG, "usb_serial_jtag_read_bytes failed");
+        }
+
+        // Send Drone-to-UI Package
+
+        if (usb_serial_jtag_write_bytes(&drone_to_ui, sizeof(Package_Drone_To_UI), USB_SERIAL_WRITE_MAX_TICKS_TO_WAIT) == 0) {
+            ESP_LOGW(DONGLE_TAG, "usb_serial_jtag_write_bytes failed");
+        }
+
         vTaskDelay(100 / portTICK_PERIOD_MS);
     }    
 }
