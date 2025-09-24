@@ -12,7 +12,7 @@
 // } Dynamic_Array;
 //
 
-static const char* DA_TAG =  "dynamic_array"
+static const char* DA_TAG =  "dynamic_array";
 
 #define da_reserve(da, expected_capacity)                               \
     do {                                                                \

@@ -12,11 +12,14 @@
 #include "freertos/task.h"
 #include "sdkconfig.h"
 
+#include "driver/uart.h"
+/* #include "driver/gpio.h" */
+
 #include <stdio.h>
 #include <string.h>
 
-#include "dynamic_array.h"
 #include "../../shared_types/drone_and_controller_communication_types.h"
+#include "dynamic_array.h"
 
 #define RECEIVE_CALLBACK_QUEUE_SIZE 10
 #define SEND_CALLBACK_QUEUE_SIZE 10
@@ -32,9 +35,7 @@ static const char *DONGLE_TAG = "espnow_dongle";
 // Special mac address for broadcasting to all devices in range, not just a single device
 static uint8_t s_broadcast_mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
-static bool is_broadcast_addr(addr) {
-    return memcmp(addr, s_broadcast_mac, ESP_NOW_ETH_ALEN) == 0;
-}
+/* #define IS_BROADCAST_ADDR(addr) (memcmp((addr), s_broadcast_mac, ESP_NOW_ETH_ALEN) == 0) */
 
 typedef struct {
     uint8_t state;                        // Indicate that if has received broadcast ESPNOW data or not.
@@ -78,24 +79,25 @@ typedef struct {
     uint8_t mac_addr[ESP_NOW_ETH_ALEN];
 } ESP_Device;
 
-static Device_ID generate_new_esp_device_id()
-{
-    static Device_ID next_device_id = 0;
-    return next_device_id++;
-}
-
 typedef struct {
     ESP_Device *items;
     size_t count;
     size_t capacity;
 } DA_Detected_ESPs;
 
+typedef struct {
+    ESP_Device *items;
+    size_t count;
+    size_t capacity;
+} DA_Connected_ESPs;
+
 static struct {
     QueueHandle_t espnow_send_callback_queue;
     QueueHandle_t espnow_receive_callback_queue;
 
     DA_Detected_ESPs da_detected_esps;
-} dgl;
+    DA_Connected_ESPs da_connected_esps;
+} dgl = { 0 };
 
 static void espnow_send_cb(const esp_now_send_info_t *tx_info, esp_now_send_status_t status)
 {
@@ -105,9 +107,9 @@ static void espnow_send_cb(const esp_now_send_info_t *tx_info, esp_now_send_stat
         return;
     }
 
-    memcpy(send_cb->mac_addr, tx_info->des_addr, ESP_NOW_ETH_ALEN);
-    send_cb->status = status;
-    if (!xQueueSend(espnow_send_callback_queue, &send_cb, ESPNOW_MAXDELAY)) {
+    memcpy(send_cb.mac_addr, tx_info->des_addr, ESP_NOW_ETH_ALEN);
+    send_cb.status = status;
+    if (!xQueueSend(dgl.espnow_send_callback_queue, &send_cb, 0)) {
         ESP_LOGW(DONGLE_TAG, "espnow_send_cb: send queue fail");
     }
 }
@@ -116,25 +118,24 @@ static void espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *
 {
     ESPNow_Receive_Callback_Info recv_cb;
     uint8_t* mac_addr = recv_info->src_addr;
-    uint8_t* des_addr = recv_info->des_addr;
 
-    if (mac_addr == NULL || data == NULL || len <= 0) {
+    if (mac_addr == NULL || data == NULL || length <= 0) {
         ESP_LOGE(DONGLE_TAG, "espnow_recv_cb: arg error");
         return;
     }
 
-    memcpy(recv_cb->mac_addr, mac_addr, ESP_NOW_ETH_ALEN);
-    recv_cb->data = malloc(length);
-    if (recv_cb->data == NULL) {
+    memcpy(recv_cb.mac_addr, mac_addr, ESP_NOW_ETH_ALEN);
+    recv_cb.package_data = malloc(length);
+    if (recv_cb.package_data == NULL) {
         ESP_LOGE(DONGLE_TAG, "espnow_recv_cb: malloc failed");
         abort();
     }
     
-    memcpy(recv_cb->data, data, len);
-    recv_cb->data_len = len;
-    if (!xQueueSend(espnow_receive_callback_queue, &recv_cb, ESPNOW_MAXDELAY)) {
+    memcpy(recv_cb.package_data, data, length);
+    recv_cb.package_data_length = length;
+    if (!xQueueSend(dgl.espnow_receive_callback_queue, &recv_cb, 0)) {
         ESP_LOGW(DONGLE_TAG, "espnow_recv_cb: receive queue fail");
-        free(recv_cb->data);
+        free(recv_cb.package_data);
     }
 }
 
@@ -163,6 +164,7 @@ static void init_wifi(uint8_t wifi_channel, bool long_range_mode)
     }
 }
 
+
 static void init_espnow()
 {
     ESP_ERROR_CHECK( esp_now_init() );
@@ -184,39 +186,58 @@ static void init_espnow()
     free(peer);
 }
 
+void UART0_setup() {
+    uart_config_t uart_config = {
+        .baud_rate           = 115200,
+        .data_bits           = UART_DATA_8_BITS,
+        .parity              = UART_PARITY_DISABLE,
+        .stop_bits           = UART_STOP_BITS_1,
+        .flow_ctrl           = UART_HW_FLOWCTRL_DISABLE,
+        //.rx_flow_ctrl_thresh = 122,
+        //.use_ref_tick        = false,
+    };
+
+    // Configure UART parameters
+    ESP_ERROR_CHECK( uart_param_config(UART_NUM_0, &uart_config) );
+    ESP_ERROR_CHECK( uart_set_pin(UART_NUM_0, 21, 22, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) );
+    ESP_ERROR_CHECK( uart_driver_install(UART_NUM_0, 1024, 0, 0, NULL, 0) );
+}
+
 static void init_dongle()
 {
     init_nvs();
     init_wifi(ESPNOW_CHANNEL, false);
     init_espnow();
+    UART0_setup();    
 
     // Initialize the dongle state
     
-    dgl.receive_callback_queue = xQueueCreate(RECEIVE_CALLBACK_QUEUE_SIZE, sizeof(ESPNow_Receive_Callback_Info));
-    dgl.send_callback_queue    = xQueueCreate(SEND_CALLBACK_QUEUE_SIZE, sizeof(ESPNow_Send_Callback_Info));
+    dgl.espnow_receive_callback_queue = xQueueCreate(RECEIVE_CALLBACK_QUEUE_SIZE, sizeof(ESPNow_Receive_Callback_Info));
+    dgl.espnow_send_callback_queue    = xQueueCreate(SEND_CALLBACK_QUEUE_SIZE, sizeof(ESPNow_Send_Callback_Info));
     
-    dgl.da_detected_esps = { 0 };
-    da_reserve(dgl.da_detected_esps, 8);
+    da_reserve(&dgl.da_detected_esps, 8);
+    da_reserve(&dgl.da_connected_esps, 8);
 }
 
-void espnow_data_prepare(ESPNow_Send_Param *send_param)
-{
-    ESPNow_Data *buf = (ESPNow_Data*)send_param->buffer;
+/* void espnow_data_prepare(ESPNow_Send_Param *send_param) */
+/* { */
+/*     ESPNow_Data *buf = (ESPNow_Data*)send_param->buffer; */
 
-    assert(send_param->length >= sizeof(ESPNow_Data));
+/*     assert(send_param->length >= sizeof(ESPNow_Data)); */
 
-    buf->type = ESPNOW_DATA_BROADCAST;
-    buf->state = send_param->state;
-    buf->seq_num = 0; //s_example_espnow_seq[buf->type]++;
-    buf->magic = send_param->magic;
-    /* /\* Fill all remaining bytes after the data with random values *\/ */
-    /* esp_fill_random(buf->payload, send_param->len - sizeof(example_espnow_data_t)); */
-    buf->crc = 0;
-    buf->crc = esp_crc16_le(UINT16_MAX, (uint8_t const *)buf, send_param->length);
+/*     buf->type = ESPNOW_DATA_BROADCAST; */
+/*     buf->state = send_param->state; */
+/*     buf->seq_num = 0; //s_example_espnow_seq[buf->type]++; */
+/*     buf->magic = send_param->magic; */
+/*     /\* /\\* Fill all remaining bytes after the data with random values *\\/ *\/ */
+/*     /\* esp_fill_random(buf->payload, send_param->len - sizeof(example_espnow_data_t)); *\/ */
+/*     buf->crc = 0; */
+/*     buf->crc = esp_crc16_le(UINT16_MAX, (uint8_t const *)buf, send_param->length); */
 
-    // random payload
-    esp_fill_random(buf->payload, send_param->length - sizeof(ESPNow_Data));
-}
+/*     // random payload */
+/*     esp_fill_random(buf->payload, send_param->length - sizeof(ESPNow_Data)); */
+/* } */
+
 
 void dongle_loop()
 {
@@ -227,7 +248,7 @@ void dongle_loop()
         {
             Package package = *((Package*) recv_info.package_data);
             switch(package.type) {
-            case PKG_D2C_REQUEST_CONNECTION:
+            case PKG_D2C_ADVERTISE:
                 if (recv_info.package_data_length != sizeof(Payload_Accept_Connection) + sizeof(Payload_Imu_Data)) {
                     ESP_LOGE(DONGLE_TAG, "recv_info.package_data_length != sizeof(Payload_Accept_Connection) + sizeof(Payload_Imu_Data)");
                     break;
@@ -243,10 +264,11 @@ void dongle_loop()
                 if (!already_detected) {
                     ESP_Device new_device = { 0 };
                     memcpy(&new_device.mac_addr, &recv_info.mac_addr, ESP_NOW_ETH_ALEN);
-                    da_append(dgl.da_detected_esps, new_device);
+                    da_append(&dgl.da_detected_esps, new_device);
                 }
 
                 break;
+                
             case PKG_D2C_IMU_DATA:
                 if (recv_info.package_data_length != sizeof(Package) + sizeof(Payload_Imu_Data)) {
                     ESP_LOGE(DONGLE_TAG, "recv_info.package_data_length != sizeof(Package) + sizeof(Payload_Imu_Data)");
@@ -256,10 +278,13 @@ void dongle_loop()
                 Payload_Imu_Data imu_data = *((Payload_Imu_Data*) package.payload);
 
                 ESP_LOGI(DONGLE_TAG, "Received imu-data package:");
-                ESP_LOGI(DONGLE_TAG, "imu_data: %ld, %f, %f, %f, %f, %f, %f", );
+                ESP_LOGI(DONGLE_TAG, "imu_data: %ld, %f, %f, %f, %f, %f, %f",
+                         imu_data.time_us, imu_data.acc_x, imu_data.acc_y, imu_data.acc_z, imu_data.omega_x, imu_data.omega_y, imu_data.omega_z);
                 break;
-            default:
                 
+            default:
+                ESP_LOGE(DONGLE_TAG, "Received package with wrong or unknown type");
+                break;
             }
             
             destroy_espnow_receive_callback_info(recv_info);
@@ -268,16 +293,24 @@ void dongle_loop()
         ESPNow_Send_Callback_Info send_info = { 0 };
         if (xQueueReceive(dgl.espnow_send_callback_queue, &send_info, 0))
         {
-            
+            if (send_info.status == ESP_NOW_SEND_FAIL) {
+                uint8_t* mac_addr = send_info.mac_addr;
+                ESP_LOGI(DONGLE_TAG, "Failed to send packge to ESP with MAC: %X:%X:%X:%X:%X:%X",
+                         mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+            }
         }
-        
-        
-        if (esp_now_send(send_param->dest_mac, send_param->buffer, send_param->length) != ESP_OK) {
-            printf("Send error");
-            abort();
+
+        // Communicate with all connected devices
+
+        for (int i = 0; i < dgl.da_connected_esps.count; ++i) {
+            /* if (esp_now_send(send_param->dest_mac, send_param->buffer, send_param->length) != ESP_OK) { */
+            /*     ESP_LOGE(DONGLE_TAG, "Send package error"); */
+            /* }             */
         }
+
+        uart_write_bytes(UART_NUM_0, "hellope\n", strlen("hellope\n"));
         
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
     }    
 }
 
