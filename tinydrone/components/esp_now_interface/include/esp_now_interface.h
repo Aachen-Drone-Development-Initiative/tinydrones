@@ -35,12 +35,12 @@ void advertise_drone_espnow(ESPnow_Controller_Connection* connection, int64_t in
 /// @brief Checks if addr is broadcast address
 bool is_broadcast_addr(uint8_t *addr);
 
-/// @brief Abstraction of ESPNOW send to packages
+/// @brief Abstraction of esp_now_send to packages
 /// @param mac_addr 
 /// @param package 
 void send_package_espnow(uint8_t *mac_addr, Package *package);
 
-/// @brief Abstracts ESPNOW packets into Packages
+/// @brief Parses ESPNOW packets into Packages
 /// Mainly for internal component use
 /// @param packet Pointer to ESPNOW packet
 /// @param package Pointer to Package
@@ -51,3 +51,4 @@ void espnow_packet_parse(ESPnow_Packet *packet, Package *package);
 /// @param packet Pointer to ESPNOW packet
 /// @param package Pointer to Package
 // void package_to_espnow_packet(ESPnow_Packet *packet, Package *package);
+

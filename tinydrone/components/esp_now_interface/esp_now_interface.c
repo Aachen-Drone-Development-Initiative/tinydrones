@@ -71,12 +71,15 @@ void advertise_drone_espnow(ESPnow_Controller_Connection *connection, int64_t in
     ESP_ERROR_CHECK(esp_now_register_recv_cb(esp_now_cb));
     
     ESPnow_Packet* buf = malloc(sizeof(ESPnow_Packet));
+    
+    Package advertisement_package = {
+        .type = PKG_D2C_ADVERTISE
+    };
 
     while (!connection->connected) {
         // Send broadcast message
         ESP_LOGI("advertisement", "Advertising Drone");
-        Package advertisement_package = {};
-        send_package_espnow(BROADCAST_MAC_ADDR, (Package *)&advertisement_package);
+        send_package_espnow(BROADCAST_MAC_ADDR, (Package *) &advertisement_package);
 
         if (xQueueReceive(s_esp_now_queue, buf, interval_ms/portTICK_PERIOD_MS) == pdTRUE) {
             ESP_LOGI("advertisement", "Advertisement answered");

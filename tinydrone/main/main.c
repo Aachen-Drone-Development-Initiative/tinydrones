@@ -23,16 +23,15 @@
 
 #define I2C_MASTER_SDA_IO GPIO_NUM_11 // GPIO number for I2C SDA
 #define I2C_MASTER_SCL_IO GPIO_NUM_10 // GPIO number for I2C SCL
-#define ADVERTISEMENT_INTERVAL_MS 1000
+#define ADVERTISEMENT_INTERVAL_MS 2000
 
 typedef struct {
     bool espnow_controller_connected;
-    int espnow_controller_mac[6];
+    uint8_t espnow_controller_mac[6];
 } Drone_Status;
 
 static Drone_Status drone_status = {
-    .espnow_controller_connected = false,
-    .espnow_controller_mac = {0, 0, 0, 0, 0, 0}
+    .espnow_controller_connected = false
 };
 
 void nvs_init() {
@@ -97,14 +96,21 @@ void app_main(void)
 
 
     // Main loop: read MPU6050 data and send via ESP-NOW
-    ESPnow_Packet* packet = malloc(sizeof(ESPnow_Packet));
+    Package_Imu_Data* package = malloc(sizeof(Package_Imu_Data));
     while (true)
     {
         MPU6050_Data mpu_data = mpu6050_get_data(mpu);
 
-        packet->len = sizeof(mpu_data);
-        memcpy(packet->data, &mpu_data, sizeof(mpu_data));
-        esp_now_send((uint8_t[]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, packet->data, packet->len);
+        package->pkg.type = PKG_D2C_IMU_DATA;
+        package->time_us = mpu_data.time_us;
+        package->omega_x = mpu_data.omega_x;
+        package->omega_y = mpu_data.omega_y;
+        package->omega_z = mpu_data.omega_z;
+        package->acc_x = mpu_data.acc_x;
+        package->acc_y = mpu_data.acc_y;
+        package->acc_z = mpu_data.acc_z;
+
+        send_package_espnow(drone_status.espnow_controller_mac, (Package *) package);
         
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
