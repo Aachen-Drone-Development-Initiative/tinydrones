@@ -19,6 +19,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "../../shared_types/communication_packets.h"
+
 #define I2C_MASTER_SDA_IO GPIO_NUM_11 // GPIO number for I2C SDA
 #define I2C_MASTER_SCL_IO GPIO_NUM_10 // GPIO number for I2C SCL
 
@@ -48,6 +50,23 @@ void minimal_wifi_init() {
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
+}
+
+static Packet* create_packet(int packet_size, Packet_Type type)
+{
+    assert(packet_size >= sizeof(Packet));
+    Packet* pkt = malloc(packet_size);
+    if (pkt == NULL) return NULL;
+
+    pkt->type = type;
+    pkt->payload_size = packet_size - sizeof(Packet);
+    
+    return pkt;
+}
+
+static void destroy_packet(Packet* pkt)
+{
+    free(pkt);
 }
 
 void app_main(void)
@@ -84,16 +103,34 @@ void app_main(void)
     peerInfo.ifidx = WIFI_IF_STA;
     ESP_ERROR_CHECK(esp_now_add_peer(&peerInfo));
 
-    espnow_packet_t* packet = malloc(sizeof(espnow_packet_t));
+    /* espnow_packet_t* packet = malloc(sizeof(espnow_packet_t)); */
     
     while (true)
     {
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        /* printf("imu_packet_size: %d\n", sizeof(Packet_D2C_Imu_Data)); */
         MPU6050_Data mpu_data = mpu6050_get_data(mpu);
 
-        packet->len = sizeof(mpu_data);
-        memcpy(packet->payload, &mpu_data, sizeof(mpu_data));
-        esp_now_send((uint8_t[]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, packet->payload, packet->len);
-        
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        Packet_D2C_Advertise* pkt_advertise = (Packet_D2C_Advertise*) create_packet(sizeof(Packet_D2C_Advertise), PKT_D2C_ADVERTISE);
+        if (pkt_advertise == NULL) continue;
+    
+        esp_now_send((uint8_t[]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, (void*) pkt_advertise, sizeof(Packet_D2C_Advertise));
+        destroy_packet((Packet*) pkt_advertise);
+
+        Packet_D2C_Imu_Data* pkt_imu_data = (Packet_D2C_Imu_Data*) create_packet(sizeof(Packet_D2C_Imu_Data), PKT_D2C_IMU_DATA);
+        if (pkt_imu_data == NULL) continue;
+        pkt_imu_data->imu_data.time_us = mpu_data.time_us;
+        pkt_imu_data->imu_data.acc_x = mpu_data.acc_x;
+        pkt_imu_data->imu_data.acc_y = mpu_data.acc_y;
+        pkt_imu_data->imu_data.acc_z = mpu_data.acc_z;
+        pkt_imu_data->imu_data.omega_x = mpu_data.omega_x;
+        pkt_imu_data->imu_data.omega_y = mpu_data.omega_y;
+        pkt_imu_data->imu_data.omega_z = mpu_data.omega_z;
+    
+        esp_now_send((uint8_t[]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, (void*) pkt_imu_data, sizeof(Packet_D2C_Imu_Data));
+
+        /* printf("hello\n"); */
+
+        destroy_packet((Packet*) pkt_imu_data);
     }
 }
