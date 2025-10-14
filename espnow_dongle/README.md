@@ -4,9 +4,9 @@ The dongle can (in theroy) be any esp32 which supports Serial/JTAG communication
 
 ## Communicating with the dongle from Julia
 
-Assuming that Julia's working directory is this directory (through you can do this from any directory).
+Assuming that Julia's working directory is this directory (though you can do this from any directory).
 
-```juila
+```julia
 julia> include("./julia_interface/espnow_dongle.jl")
 julia> Dongle.open("/dev/ttyACM0") # choose your actual port-name here
 julia> Dongle.read_and_eval_packet()
