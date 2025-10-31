@@ -1,6 +1,7 @@
 idf_component_register(SRCS "main.c"
   INCLUDE_DIRS "."
   PRIV_REQUIRES MPU6050
+  PRIV_REQUIRES esp_now_interface
   PRIV_REQUIRES esp_driver_usb_serial_jtag
   PRIV_REQUIRES esp_driver_i2c
   PRIV_REQUIRES esp_driver_gpio
@@ -9,5 +10,6 @@ idf_component_register(SRCS "main.c"
   PRIV_REQUIRES esp_event
   PRIV_REQUIRES esp_netif
   PRIV_REQUIRES esp_wifi
+  PRIV_REQUIRES 
 )
 
