@@ -21,8 +21,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "../../shared_types/communication_packets.h"
-
 #define I2C_MASTER_SDA_IO GPIO_NUM_11 // GPIO number for I2C SDA
 #define I2C_MASTER_SCL_IO GPIO_NUM_10 // GPIO number for I2C SCL
 #define ADVERTISEMENT_INTERVAL_MS 2000
@@ -107,7 +105,7 @@ void app_main(void)
     // Initialize NVS, Wi-Fi and ESP-NOW
     nvs_init();
     minimal_wifi_init();
-    esp_now_setup();
+    espnow_init();
 
     // Register Broadcast MAC Address
     esp_now_peer_info_t peerInfo = {};
@@ -123,8 +121,7 @@ void app_main(void)
     drone_status.espnow_controller_connected = connection.connected;
     memcpy(drone_status.espnow_controller_mac, connection.mac_addr, 6);
 
-
-    n// Main loop: read MPU6050 data and send via ESP-NOW
+    // Main loop: read MPU6050 data and send via ESP-NOW
     Package_Imu_Data* package = malloc(sizeof(Package_Imu_Data));
 
     while (true)
@@ -146,55 +143,4 @@ void app_main(void)
         
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
-
-    /* while (true) */
-    /* { */
-    /*     // Handle incoming packets from the controller via ESP-Now */
-        
-    /*     ESPNow_Receive_Callback_Info recv_info = { 0 }; */
-    /*     if (xQueueReceive(dgl.espnow_receive_callback_queue, &recv_info, 0)) */
-    /*     { */
-    /*         Packet* pkt = (Packet*) recv_info.packet_data; */
-    /*         Packet_Info pkt_info = s_pkt_info_table[pkt->type]; */
-
-    /*         if (recv_info.packet_data_length == packet_size(pkt)) */
-    /*         { */
-    /*             if (pkt_info.from_drone_handler != NULL) { */
-    /*                 pkt_info.from_drone_handler(pkt, recv_info.mac_addr); */
-    /*             } */
-    /*             else DGL_ERROR("Received unexpected or unknown packet from the drone"); */
-    /*         } */
-    /*         else DGL_ERROR("recv_info.packet_data_length != packet_size(pkt)"); */
-    /*     } */
-    /*     destroy_espnow_receive_callback_info(recv_info); */
-
-    /*     // Handle ESP-Now send Callback */
-
-    /*     ESPNow_Send_Callback_Info send_info = { 0 }; */
-    /*     if (xQueueReceive(dgl.espnow_send_callback_queue, &send_info, 0)) */
-    /*     { */
-    /*         if (send_info.status == ESP_NOW_SEND_FAIL) { */
-    /*             uint8_t* mac_addr = send_info.mac_addr; */
-    /*             DGL_DBG_INFO("Failed to send packge to ESP with MAC: %X:%X:%X:%X:%X:%X", */
-    /*                         mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]); */
-    /*         } */
-    /*     } */
-
-    /*     // Handle incoming packets from the user via USB Serial/JTAG */
-        
-    /*     Packet* pkt = get_next_packet_from_user_via_serial_port(); */
-    /*     if (pkt != NULL) */
-    /*     { */
-    /*         DGL_DBG_INFO("Received packet!"); */
-    /*         Packet_Info pkt_info = s_pkt_info_table[pkt->type]; */
-            
-    /*         if (pkt_info.from_user_handler != NULL) { */
-    /*             pkt_info.from_user_handler(pkt); */
-    /*         } */
-    /*         else DGL_ERROR("Received unexpected or unknown packet from the user"); */
-    /*     } */
-    /*     destroy_packet(pkt); */
-        
-    /*     vTaskDelay(DONGLE_MAIN_LOOP_DELAY); */
-    /* } */
 }

@@ -293,6 +293,7 @@ static int send_packet_to_user_via_serial_port(Packet* pkt)
     return bytes_written;
 }
 
+// Unused, when SEND_LOGS_AS_SERIAL_PACKETS is 0
 [[maybe_unused]] static void send_c2u_log_msg(Log_Msg_Type type, const char* format, ...)
 {
     va_list args;

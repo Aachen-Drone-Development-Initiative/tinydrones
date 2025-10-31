@@ -1,12 +1,28 @@
 #include "esp_now_interface.h"
 
+#include "../../shared_types/communication_packets.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "esp_now.h"
+#include "freertos/FreeRTOS.h"
+#include "esp_log.h"
+
 #define BROADCAST_MAC_ADDR (uint8_t[]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
 #define ESP_NOW_QUEUE_LENGTH 10
 #define DEFAULT_ESPNOW_CHANNEL 0
 
-static QueueHandle_t s_esp_now_queue; // Queue for espnow packets
+static QueueHandle_t s_esp_now_recv_queue; // Queue for espnow packets
 
-void esp_now_cb(const esp_now_recv_info_t *recieved_packet, const uint8_t *data, int data_len) {
+typedef struct {
+    uint8_t src_mac_addr[6];
+    uint8_t des_mac_addr[6];
+    uint8_t len;
+    uint8_t* data;
+} ESPnow_Packet;
+
+void espnow_recv_cb(const esp_now_recv_info_t *recieved_packet, const uint8_t *data, int data_len) {
     ESPnow_Packet espnow_packet;
     ESP_LOGI("espnow", "Received espnow_packet from %02X:%02X:%02X:%02X:%02X:%02X, length: %d", 
         recieved_packet->src_addr[0], recieved_packet->src_addr[1], recieved_packet->src_addr[2], 
@@ -20,7 +36,7 @@ void esp_now_cb(const esp_now_recv_info_t *recieved_packet, const uint8_t *data,
     memcpy(espnow_packet.des_mac_addr, recieved_packet->des_addr, 6);
     memcpy(espnow_packet.data, data, data_len);
 
-    xQueueSend(s_esp_now_queue, &espnow_packet, 0);
+    xQueueSend(s_esp_now_recv_queue, &espnow_packet, 0);
 }
 
 bool is_broadcast_addr(uint8_t* addr) {
@@ -29,7 +45,7 @@ bool is_broadcast_addr(uint8_t* addr) {
 
 void esp_now_setup() {
     ESP_ERROR_CHECK(esp_now_init());
-    s_esp_now_queue = xQueueCreate(ESP_NOW_QUEUE_LENGTH, sizeof(ESPnow_Packet));
+    s_esp_now_recv_queue = xQueueCreate(ESP_NOW_QUEUE_LENGTH, sizeof(ESPnow_Packet));
 }
 
 void send_package_espnow(uint8_t *mac_addr, Package *package) {
@@ -68,7 +84,7 @@ void advertise_drone_espnow(ESPnow_Controller_Connection *connection, int64_t in
     } 
 
     connection->connected = false;
-    ESP_ERROR_CHECK(esp_now_register_recv_cb(esp_now_cb));
+    ESP_ERROR_CHECK(esp_now_register_recv_cb(espnow_recv_cb));
     
     ESPnow_Packet* buf = malloc(sizeof(ESPnow_Packet));
     
@@ -81,7 +97,7 @@ void advertise_drone_espnow(ESPnow_Controller_Connection *connection, int64_t in
         ESP_LOGI("advertisement", "Advertising Drone");
         send_package_espnow(BROADCAST_MAC_ADDR, (Package *) &advertisement_package);
 
-        if (xQueueReceive(s_esp_now_queue, buf, interval_ms/portTICK_PERIOD_MS) == pdTRUE) {
+        if (xQueueReceive(s_esp_now_recv_queue, buf, interval_ms/portTICK_PERIOD_MS) == pdTRUE) {
             ESP_LOGI("advertisement", "Advertisement answered");
             free(buf->data);
             Package package;
@@ -107,7 +123,7 @@ void advertise_drone_espnow(ESPnow_Controller_Connection *connection, int64_t in
 
     // cleanup
     free(buf);
-    xQueueReset(s_esp_now_queue);
+    xQueueReset(s_esp_now_recv_queue);
 }
 
 void espnow_packet_parse(ESPnow_Packet *packet, Package *package) {
