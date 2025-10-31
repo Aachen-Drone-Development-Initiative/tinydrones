@@ -198,23 +198,25 @@ struct Receive_Log_Msg
     log_msg::String
 end
 
-function read_and_eval_payload(::Val{PKT_C2U_LOG_MSG}, pkt::Basic_Packet, sp_idx)
+function read_and_eval_payload(::Val{PKT_C2U_LOG_MSG}, sp_idx)
     log_msg_type = Serialportlib.read_bytes_as_object_packed(Log_Msg_Type, sp_idx=sp_idx)
-    msg_length = Serialportlib.read_bytes_as_object_packed(Int32, sp_idx=sp_idx)
+    msg_length = Int64(Serialportlib.read_bytes_as_object_packed(Int32, sp_idx=sp_idx))
     log_msg_cstr = Serialportlib.read_bytes_as_object_packed(NTuple{msg_length, Cchar}, sp_idx=sp_idx)
 
     cstr_ref = Ref{NTuple{msg_length, Cchar}}(log_msg_cstr)
     
     log_msg = GC.@preserve cstr_ref begin
         cstr_ptr = Base.unsafe_convert(Ptr{NTuple{msg_length, Cchar}}, cstr_ref)
-        unsafe_string(base.unsafe_convert(Ptr{Cchar}, cstr_ptr), msg_length)
+        unsafe_string(Base.unsafe_convert(Ptr{Cchar}, cstr_ptr), msg_length)
     end
     
     return Receive_Log_Msg(log_msg_type, log_msg)
 end
 
 function open(portname::String; sp_idx=Serialportlib.DEFAULT_SP_IDX)::Bool
-    
+
+    # The baudrate is actually irrelevant, because we are talking to a
+    # usb device which mimics a serialport. So it's just set to 115200.
     Serialportlib.open(portname, 115200, sp_idx=sp_idx) || return false
     
     # Toggling RTS (Ready To Send) to signal to the esp32 that we are ready to start the serial-communication
@@ -229,7 +231,7 @@ function close(; sp_idx=Serialportlib.DEFAULT_SP_IDX)::Bool
     return Serialportlib.close(sp_idx=sp_idx)
 end
 
-function read_and_eval_packet(; sp_idx=Serialportlib.DEFAULT_SP_IDX)
+function read_packet(; sp_idx=Serialportlib.DEFAULT_SP_IDX)
 
     # First reads and validates the delimiter, then the next 'basic'-packet, and finally the payload
     # using the information about the payload size from the basic-packet.
@@ -260,8 +262,18 @@ function read_and_eval_packet(; sp_idx=Serialportlib.DEFAULT_SP_IDX)
         return nothing
     end
 
-    # return basic_packet
     return read_and_eval_payload(Val(basic_packet.type), sp_idx)
+end
+
+function read_all_packets(; sp_idx=Serialportlib.DEFAULT_SP_IDX)
+    
+    packet = read_packet(sp_idx=sp_idx)
+    packets = Vector{Any}(undef, 0)
+    while packet != nothing
+        push!(packets, packet)
+        packet = read_packet(sp_idx=sp_idx)
+    end
+    return packets
 end
 
 function write_packet(pkt::PacketT; sp_idx=Serialportlib.DEFAULT_SP_IDX)::UInt64 where { PacketT <: Packet_U2C }

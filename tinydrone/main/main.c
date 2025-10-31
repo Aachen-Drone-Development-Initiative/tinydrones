@@ -69,6 +69,16 @@ static void destroy_packet(Packet* pkt)
     free(pkt);
 }
 
+/* static void xtask_consume_espnow_receive_queue(void*) */
+/* { */
+/*     while (true) */
+/*     { */
+/*         vTaskDelay(/\**\/); */
+/*     } */
+
+/*     vTaskDelete(NULL); // Delete this task */
+/* } */
+
 void app_main(void)
 {
     // I2C Setup
@@ -133,4 +143,55 @@ void app_main(void)
 
         destroy_packet((Packet*) pkt_imu_data);
     }
+
+    /* while (true) */
+    /* { */
+    /*     // Handle incoming packets from the controller via ESP-Now */
+        
+    /*     ESPNow_Receive_Callback_Info recv_info = { 0 }; */
+    /*     if (xQueueReceive(dgl.espnow_receive_callback_queue, &recv_info, 0)) */
+    /*     { */
+    /*         Packet* pkt = (Packet*) recv_info.packet_data; */
+    /*         Packet_Info pkt_info = s_pkt_info_table[pkt->type]; */
+
+    /*         if (recv_info.packet_data_length == packet_size(pkt)) */
+    /*         { */
+    /*             if (pkt_info.from_drone_handler != NULL) { */
+    /*                 pkt_info.from_drone_handler(pkt, recv_info.mac_addr); */
+    /*             } */
+    /*             else DGL_ERROR("Received unexpected or unknown packet from the drone"); */
+    /*         } */
+    /*         else DGL_ERROR("recv_info.packet_data_length != packet_size(pkt)"); */
+    /*     } */
+    /*     destroy_espnow_receive_callback_info(recv_info); */
+
+    /*     // Handle ESP-Now send Callback */
+
+    /*     ESPNow_Send_Callback_Info send_info = { 0 }; */
+    /*     if (xQueueReceive(dgl.espnow_send_callback_queue, &send_info, 0)) */
+    /*     { */
+    /*         if (send_info.status == ESP_NOW_SEND_FAIL) { */
+    /*             uint8_t* mac_addr = send_info.mac_addr; */
+    /*             DGL_DBG_INFO("Failed to send packge to ESP with MAC: %X:%X:%X:%X:%X:%X", */
+    /*                         mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]); */
+    /*         } */
+    /*     } */
+
+    /*     // Handle incoming packets from the user via USB Serial/JTAG */
+        
+    /*     Packet* pkt = get_next_packet_from_user_via_serial_port(); */
+    /*     if (pkt != NULL) */
+    /*     { */
+    /*         DGL_DBG_INFO("Received packet!"); */
+    /*         Packet_Info pkt_info = s_pkt_info_table[pkt->type]; */
+            
+    /*         if (pkt_info.from_user_handler != NULL) { */
+    /*             pkt_info.from_user_handler(pkt); */
+    /*         } */
+    /*         else DGL_ERROR("Received unexpected or unknown packet from the user"); */
+    /*     } */
+    /*     destroy_packet(pkt); */
+        
+    /*     vTaskDelay(DONGLE_MAIN_LOOP_DELAY); */
+    /* } */
 }

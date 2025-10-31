@@ -9,7 +9,7 @@ Assuming that Julia's working directory is this directory (though you can do thi
 ```julia
 julia> include("./julia_interface/espnow_dongle.jl")
 julia> Dongle.open("/dev/ttyACM0") # choose your actual port-name here
-julia> Dongle.read_and_eval_packet()
+julia> Dongle.read_packet()
 ```
 
 More examples will be added once the functionality is tested :)

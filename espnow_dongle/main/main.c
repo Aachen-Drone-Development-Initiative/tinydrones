@@ -49,7 +49,7 @@
 
 // Error messaging and logging
 
-#define SEND_LOGS_AS_SERIAL_PACKETS (0)
+#define SEND_LOGS_AS_SERIAL_PACKETS (1)
 #define ENABLE_DBG_INFO_LOGS (1)
 
 #if SEND_LOGS_AS_SERIAL_PACKETS
@@ -671,7 +671,7 @@ static Packet* get_next_packet_from_user_via_serial_port()
         DGL_ERROR("Failed to read serial packet: Delimiter was not at the expected location");
         // TODO: 'skip to next delimiter'
         return NULL;
-    }    
+    }
 
     Packet pkt;
     int bytes_read_pkt = usb_serial_jtag_read_bytes(&pkt, sizeof(Packet), USB_SERIAL_READ_MAX_TICKS_TO_WAIT);
@@ -731,6 +731,7 @@ void dongle_loop()
         Packet* pkt = get_next_packet_from_user_via_serial_port();
         if (pkt != NULL)
         {
+            DGL_DBG_INFO("Received packet!");
             Packet_Info pkt_info = s_pkt_info_table[pkt->type];
             
             if (pkt_info.from_user_handler != NULL) {

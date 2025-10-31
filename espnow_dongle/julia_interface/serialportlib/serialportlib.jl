@@ -119,7 +119,7 @@ end
 
 function write_bytes_from_object_packed(object::In; sp_idx=DEFAULT_SP_IDX)::Int64 where { In }
     isbitstype(In) || throw(ArgumentError("Object type for `write_bytes_from_object_packed` must be isbits"))
-    packed_size = Base.packedsize(object)
+    packed_size = Base.packedsize(In)
     in_packed = reinterpret(NTuple{packed_size, UInt8}, object)
     in_packed_ref = Ref{NTuple{packed_size, UInt8}}(in_packed)
     return GC.@preserve in_packed_ref begin

@@ -241,7 +241,7 @@ SPAPI bool serialport_skip_behind_next_delimiter(SP_IDX sp_idx, void* delimiter,
         ssize_t bytes_read = read(sp.fd, &delim_cmp_buff[delimiter_size - 1], 1);
 
         for (uint64_t i = 0; i < delimiter_size; ++i) {
-            printf("%X, ", delim_cmp_buff[i]);
+            printf("0x%X, ", delim_cmp_buff[i]);
         }
         printf("\n");
 
