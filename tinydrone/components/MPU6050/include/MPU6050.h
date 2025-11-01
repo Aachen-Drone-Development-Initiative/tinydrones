@@ -32,4 +32,5 @@ typedef struct {
     float acc_x, acc_y, acc_z;       // [m/s^2]
 } MPU6050_Data;
 
+// Reads the output registers on the mpu6050 returns the values converted to SI units.
 MPU6050_Data mpu6050_get_data(MPU6050_Handle mpu);
