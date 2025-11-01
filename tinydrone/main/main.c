@@ -14,19 +14,25 @@
 #include "freertos/task.h"
 #include "driver/usb_serial_jtag.h"
 #include "sdkconfig.h"
+
 #include "MPU6050.h"
+#include "esp_now_interface.h"
 
 #include <stdio.h>
 #include <string.h>
 
 #define I2C_MASTER_SDA_IO GPIO_NUM_11 // GPIO number for I2C SDA
 #define I2C_MASTER_SCL_IO GPIO_NUM_10 // GPIO number for I2C SCL
+#define ADVERTISEMENT_INTERVAL_MS 2000
 
 typedef struct {
-    uint8_t src_mac_addr[6]; // Source MAC
-    uint8_t payload[ESP_NOW_MAX_DATA_LEN_V2];
-    size_t len;
-} espnow_packet_t;
+    bool espnow_controller_connected;
+    uint8_t espnow_controller_mac[6];
+} Drone_Status;
+
+static Drone_Status drone_status = {
+    .espnow_controller_connected = false
+};
 
 void nvs_init() {
     esp_err_t ret = nvs_flash_init();
@@ -50,6 +56,33 @@ void minimal_wifi_init() {
     ESP_ERROR_CHECK(esp_wifi_start());
 }
 
+static Packet* create_packet(int packet_size, Packet_Type type)
+{
+    assert(packet_size >= sizeof(Packet));
+    Packet* pkt = malloc(packet_size);
+    if (pkt == NULL) return NULL;
+
+    pkt->type = type;
+    pkt->payload_size = packet_size - sizeof(Packet);
+    
+    return pkt;
+}
+
+static void destroy_packet(Packet* pkt)
+{
+    free(pkt);
+}
+
+/* static void xtask_consume_espnow_receive_queue(void*) */
+/* { */
+/*     while (true) */
+/*     { */
+/*         vTaskDelay(/\**\/); */
+/*     } */
+
+/*     vTaskDelete(NULL); // Delete this task */
+/* } */
+
 void app_main(void)
 {
     // I2C Setup
@@ -69,12 +102,10 @@ void app_main(void)
     MPU6050_Handle mpu = mpu6050_init(master_bus, MPU6050_PLUS_MINUS_500_DEG_PER_SECOND, MPU6050_PLUS_MINUS_2G);
     if (mpu.i2c_handle == NULL) return;
 
-    // ESP NOW
-
     // Initialize NVS, Wi-Fi and ESP-NOW
     nvs_init();
     minimal_wifi_init();
-    ESP_ERROR_CHECK(esp_now_init());
+    espnow_init();
 
     // Register Broadcast MAC Address
     esp_now_peer_info_t peerInfo = {};
@@ -84,15 +115,31 @@ void app_main(void)
     peerInfo.ifidx = WIFI_IF_STA;
     ESP_ERROR_CHECK(esp_now_add_peer(&peerInfo));
 
-    espnow_packet_t* packet = malloc(sizeof(espnow_packet_t));
-    
+    // Connect to espnow controller
+    ESPnow_Controller_Connection connection;
+    advertise_drone_espnow(&connection, ADVERTISEMENT_INTERVAL_MS);
+    drone_status.espnow_controller_connected = connection.connected;
+    memcpy(drone_status.espnow_controller_mac, connection.mac_addr, 6);
+
+    // Main loop: read MPU6050 data and send via ESP-NOW
+    Package_Imu_Data* package = malloc(sizeof(Package_Imu_Data));
+
     while (true)
     {
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        /* printf("imu_packet_size: %d\n", sizeof(Packet_D2C_Imu_Data)); */
         MPU6050_Data mpu_data = mpu6050_get_data(mpu);
 
-        packet->len = sizeof(mpu_data);
-        memcpy(packet->payload, &mpu_data, sizeof(mpu_data));
-        esp_now_send((uint8_t[]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, packet->payload, packet->len);
+        package->pkg.type = PKG_D2C_IMU_DATA;
+        package->time_us = mpu_data.time_us;
+        package->omega_x = mpu_data.omega_x;
+        package->omega_y = mpu_data.omega_y;
+        package->omega_z = mpu_data.omega_z;
+        package->acc_x = mpu_data.acc_x;
+        package->acc_y = mpu_data.acc_y;
+        package->acc_z = mpu_data.acc_z;
+
+        send_package_espnow(drone_status.espnow_controller_mac, (Package *) package);
         
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
