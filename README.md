@@ -68,6 +68,8 @@ MPU6050_Data mpu6050_get_data(MPU6050_Handle mpu);
 
 4. You are always welcome to explain the technicalities of your implementation, in comment-blocks where appropriate.
 
-### Header files
+### Header files / component interface
 
 1. Should contain only the interface to your code, ie. the function declarations and everything that is required to make these declarations compile (types, #includes, etc.). Everything else must be in the associated C-file(s).
+2. Prefix **all** functions with a custom short prefix for your component, for example `mpu6050_` for the MPU6050 component.
+3. Prefix **all** types with a custom short prefix for your component, for example `MPU6050_` for the MPU6050 component.

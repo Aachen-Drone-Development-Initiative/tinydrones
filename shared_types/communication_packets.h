@@ -48,6 +48,7 @@ enum {
     PKT_C2U_IMU_DATA = 15,
     
     PKT_C2U_LOG_MSG = 16,
+    // TODO: Implement PKT_D2C_LOG_MSG
     
     PKT_TYPE_SIZE, // NOTE (YUZENI): Make sure this has the largest value
 };
@@ -138,8 +139,8 @@ typedef struct {
 
 typedef struct {
     int64_t time_us;
-    float omega_x, omega_y, omega_z;
-    float acc_x, acc_y, acc_z;
+    float omega_x, omega_y, omega_z; // [rad/s]
+    float acc_x, acc_y, acc_z;       // [m/s^2]
 } PKT_PADDING Payload_Imu_Data;
 
 // type == PKT_D2C_IMU_DATA
