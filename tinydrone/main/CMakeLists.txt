@@ -2,8 +2,9 @@ idf_component_register(SRCS "main.c"
   INCLUDE_DIRS "."
   
   ## our components
-  PRIV_REQUIRES MPU6050
+  PRIV_REQUIRES mpu6050
   PRIV_REQUIRES controller_communication
+  PRIV_REQUIRES motor_driver
 
   ## esp-idf components
   PRIV_REQUIRES esp_driver_usb_serial_jtag
@@ -16,3 +17,5 @@ idf_component_register(SRCS "main.c"
   PRIV_REQUIRES esp_wifi
 )
 
+# Set all configs here, DONT USE 'idf.py menueconfig'
+# set(CONFIG_USE_WARP 1) # this is just an example

@@ -455,11 +455,6 @@ static void receive_d2c_imu_data(Packet* pkt, uint8_t* mac_addr)
     Packet_D2C_Imu_Data* pkt_d2c_imu_data = (Packet_D2C_Imu_Data*) pkt;
     assert(pkt_d2c_imu_data->pkt.type == PKT_D2C_IMU_DATA);
 
-    /* DGL_DBG_INFO("Received imu-data packet:"); */
-    /* DGL_DBG_INFO("imu_data: %ld, %f, %f, %f, %f, %f, %f", pkt_imu_data->imu_data.time_us, */
-    /*             pkt_imu_data->imu_data.acc_x, pkt_imu_data->imu_data.acc_y, pkt_imu_data->imu_data.acc_z, */
-    /*             pkt_imu_data->imu_data.omega_x, pkt_imu_data->imu_data.omega_y, pkt_imu_data->imu_data.omega_z); */
-
     ESP_IDX esp_idx = get_esp_idx_from_mac_addr(mac_addr);
     if (esp_idx == INVALID_ESP_IDX) return;
 

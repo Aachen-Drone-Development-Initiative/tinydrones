@@ -24,7 +24,7 @@ typedef struct {
     MPU6050_Accel_Range_Type accel_range;
 } MPU6050_Handle;
 
-MPU6050_Handle mpu6050_init(i2c_master_bus_handle_t master_bus, MPU6050_Gyro_Range_Type, MPU6050_Accel_Range_Type);
+esp_err_t mpu6050_init(MPU6050_Handle* mpu, i2c_master_bus_handle_t master_bus, MPU6050_Gyro_Range_Type, MPU6050_Accel_Range_Type);
 
 typedef struct {
     int64_t time_us;
@@ -33,4 +33,4 @@ typedef struct {
 } MPU6050_Data;
 
 // Reads the output registers on the mpu6050 returns the values converted to SI units.
-MPU6050_Data mpu6050_get_data(MPU6050_Handle mpu);
+MPU6050_Data mpu6050_get_data(MPU6050_Handle* mpu);

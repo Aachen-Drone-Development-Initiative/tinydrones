@@ -9,12 +9,16 @@
 3. Choose explanatory names, but don't make them too long, it's okay to assume some knowledge.
 4. Wait a little bit before introducing a new abstraction and implement it when it survived in your head for some time.
 5. Think hard about the structure/design of your code, go for a walk when you are stuck or unsatisfied.
-6. Commit to high standards.
+6. Commit to high standards!
+
+### ESP-IDF specific
+
+1. Never use `idf.py menueconfig` set all configs in the respective `CMakeLists.txt` for example `set(CONFIG_USE_WARP 1)`
 
 ### Function declarations
 
 1. Opening bracket on the next line (please)
-2. Function name in lower-snake-case
+2. Function name in lower_snake_case
 3. If the function is only used in the translation unit (C-file) it's defined in, then declare it `static`. This helps the linker and informs the programmer.
 
 ```c
@@ -26,7 +30,7 @@ static int foo_bar()
 
 ### Variable declarations
 
-1. All variable names in lower-snake-case
+1. All variable names in lower_snake_case
 
 #### Global variables
 
@@ -39,8 +43,8 @@ static Component_State s_state = {0};
 
 ### Type declarations
 
-1. Use `typedef`
-2. Capital-snake-case ie. `Packet_Info`
+1. Capital_Snake_Case
+2. Use `typedef`
 
 ```c
 typedef struct {
@@ -50,7 +54,7 @@ typedef struct {
 
 ### Constants/#Defines
 
-1. Upper-snake-case ie. `#define MAX_ESP_DEVICES (128)`.
+1. UPPER_SNAKE_CASE
 2. Always encase the #define value with parenthese ie. `#define FOO (42)`. Typically this is only necessary when defining an expression, but I find it more readable, so let's just do it always :)
 3. Clearly seperate implementation specific constants and 'user-changable' constants.
 4. Put them at the top of the file, behind includes (especially the user-changable ones).

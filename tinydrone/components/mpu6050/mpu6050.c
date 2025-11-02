@@ -1,4 +1,4 @@
-#include "MPU6050.h"
+#include "mpu6050.h"
 
 #include "sys/time.h"
 #include <math.h>
@@ -12,22 +12,22 @@
 
 #define G_ACC 9.80665f
 
-static bool mpu6050_set_register(MPU6050_Handle mpu, uint8_t register_address, uint8_t value)
+static bool mpu6050_set_register(MPU6050_Handle* mpu, uint8_t register_address, uint8_t value)
 {
     uint8_t buffer[] = {register_address, value};
-    if (i2c_master_transmit(mpu.i2c_handle, buffer, sizeof(buffer), -1) != ESP_OK) return false;
+    if (i2c_master_transmit(mpu->i2c_handle, buffer, sizeof(buffer), -1) != ESP_OK) return false;
     return true;
 }
 
 // Starts reading at 'begin_register_address' 
-static bool mpu6050_read_registers(MPU6050_Handle mpu, uint8_t begin_register_address, uint8_t *buffer, size_t length)
+static bool mpu6050_read_registers(MPU6050_Handle* mpu, uint8_t begin_register_address, uint8_t *buffer, size_t length)
 {
     // First transmit the starting address, then receive the bytes
-    if (i2c_master_transmit_receive(mpu.i2c_handle, &begin_register_address, 1, buffer, length, -1) != ESP_OK) return false;
+    if (i2c_master_transmit_receive(mpu->i2c_handle, &begin_register_address, 1, buffer, length, -1) != ESP_OK) return false;
     return true;
 }
 
-MPU6050_Handle mpu6050_init(i2c_master_bus_handle_t master_bus, MPU6050_Gyro_Range_Type gyro_range, MPU6050_Accel_Range_Type accel_range)
+esp_err_t mpu6050_init(MPU6050_Handle* mpu, i2c_master_bus_handle_t master_bus, MPU6050_Gyro_Range_Type gyro_range, MPU6050_Accel_Range_Type accel_range)
 {
     i2c_device_config_t i2c_device_config = {
         .dev_addr_length = I2C_ADDR_BIT_7, // 7-bit address
@@ -38,33 +38,32 @@ MPU6050_Handle mpu6050_init(i2c_master_bus_handle_t master_bus, MPU6050_Gyro_Ran
     // probe the device to check if it's connected
     if (i2c_master_probe(master_bus, 0x68, 100) != ESP_OK) {
         printf("Error: Didn't find an i2c device let alone mpu6050 at adress 0x68\n");
-        return (MPU6050_Handle){0};
+        return ESP_FAIL;
     }
 
-    MPU6050_Handle mpu = {0};
-    mpu.gyro_range = gyro_range;
-    mpu.accel_range = accel_range;
-    if (i2c_master_bus_add_device(master_bus, &i2c_device_config, &mpu.i2c_handle) != ESP_OK) {
+    mpu->gyro_range = gyro_range;
+    mpu->accel_range = accel_range;
+    if (i2c_master_bus_add_device(master_bus, &i2c_device_config, &mpu->i2c_handle) != ESP_OK) {
         printf("Error: Failed to add mpu6050 as i2c device\n");
-        return (MPU6050_Handle){0};
+        return ESP_FAIL;
     }
 
-    if (!mpu6050_set_register(mpu, REG_PWR_MGMT_1, 0x00)) return (MPU6050_Handle){0}; // wake up the MPU6050 by writing 0 to PWR_MGMT_1 register
+    if (!mpu6050_set_register(mpu, REG_PWR_MGMT_1, 0x00)) return ESP_FAIL; // wake up the MPU6050 by writing 0 to PWR_MGMT_1 register
 
     // specify sample rate
     // sample rate = (gyro output rate - 8 Khz) / (value at REG_SMPLRT_DIV + 1)
     // REG_SMPLRT_DIV == 0x00 => max sample rate
     // WARNING: The output rate of the accelerometer is just 1 Khz, so if we query at 8 Khz, accel values will repeat
-    if (!mpu6050_set_register(mpu, REG_SMPLRT_DIV, 0x00)) return (MPU6050_Handle){0};
+    if (!mpu6050_set_register(mpu, REG_SMPLRT_DIV, 0x00)) return ESP_FAIL;
 
     // specify range
-    if (!mpu6050_set_register(mpu, REG_GYRO_CONFIG, (uint8_t) gyro_range)) return (MPU6050_Handle){0};
-    if (!mpu6050_set_register(mpu, REG_ACCEL_CONFIG, (uint8_t) accel_range)) return (MPU6050_Handle){0};
+    if (!mpu6050_set_register(mpu, REG_GYRO_CONFIG, (uint8_t) gyro_range)) return ESP_FAIL;
+    if (!mpu6050_set_register(mpu, REG_ACCEL_CONFIG, (uint8_t) accel_range)) return ESP_FAIL;
 
-    return mpu;
+    return ESP_OK;
 }
 
-MPU6050_Data mpu6050_get_data(MPU6050_Handle mpu)
+MPU6050_Data mpu6050_get_data(MPU6050_Handle* mpu)
 {
     uint8_t raw_gyro_buffer[6];
     uint8_t raw_accel_buffer[6];
@@ -88,7 +87,7 @@ MPU6050_Data mpu6050_get_data(MPU6050_Handle mpu)
     int16_t raw_acc_z = ((uint16_t) raw_accel_buffer[4] << 8) | (uint16_t) raw_accel_buffer[5];
 
     float gyro_range_radps = 0; // [rad/s]
-    switch (mpu.gyro_range) {
+    switch (mpu->gyro_range) {
     case MPU6050_PLUS_MINUS_250_DEG_PER_SECOND: gyro_range_radps = 250.f/360.0 * 2.0*M_PI; break;
     case MPU6050_PLUS_MINUS_500_DEG_PER_SECOND: gyro_range_radps = 500.f/360.0 * 2.0*M_PI; break;
     case MPU6050_PLUS_MINUS_1000_DEG_PER_SECOND: gyro_range_radps = 1000.f/360.0 * 2.0*M_PI; break;
@@ -96,7 +95,7 @@ MPU6050_Data mpu6050_get_data(MPU6050_Handle mpu)
     }
     
     float accel_range_mpss = 0; // [m/s^2]
-    switch (mpu.accel_range) {
+    switch (mpu->accel_range) {
     case MPU6050_PLUS_MINUS_2G: accel_range_mpss = 2.f * G_ACC; break;
     case MPU6050_PLUS_MINUS_4G: accel_range_mpss = 4.f * G_ACC; break;
     case MPU6050_PLUS_MINUS_8G: accel_range_mpss = 8.f * G_ACC; break;
