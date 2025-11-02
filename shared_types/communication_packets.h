@@ -2,9 +2,9 @@
 
 #include <stdint.h>
 
-#define PACKETS_DISABLE_PADDING (1)
+#define PACKETS_REMOVE_PADDING (1)
 
-#if PACKETS_DISABLE_PADDING
+#if PACKETS_REMOVE_PADDING
     #define PKT_PADDING __attribute__((packed))
 #else
     #define PKT_PADDING
