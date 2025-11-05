@@ -42,6 +42,6 @@ void con_calculate_control_inputs(void)
 }
 
 void con_control_rotors_with_f(void) 
-{ //uses f1, f2, f3, f4 to control the rotors
+{ //uses f1, f2, f3, f4 to control the rotors, use setRotor(motor_id: int, value: float) from motor component
     #warning "control_rotors_with_f function is not implemented yet."
 }
