@@ -1,4 +1,7 @@
 .vscode/
 build/
 sdkconfig.old
+dependencies.lock
 .cache/
+.venv/
+__pycache__

@@ -8,7 +8,7 @@ using Base: packedsize
 const Serial_Delimiter = UInt32
 const SERIAL_DELIMITER = Serial_Delimiter(0x796E6974) # "tiny" in ascii-codes
 
-const ESP_IDX = Int32
+const Esp_Idx = Int32
 const INVALID_ESP_IDX = -1
 
 @enum Package_Type::UInt8 begin
@@ -49,50 +49,50 @@ end
 # type == PKT_U2C_CONNECT
 struct Packet_U2C_Connect <: Packet_U2C
     pkt::Basic_Packet
-    esp_idx::ESP_IDX
+    esp_idx::Esp_Idx
 end
 
 function Packet_U2C_Connect(esp_idx)
-    Packet_U2C_Connect(Basic_Packet(PKT_U2C_CONNECT, sizeof(ESP_IDX)), esp_idx)
+    Packet_U2C_Connect(Basic_Packet(PKT_U2C_CONNECT, sizeof(Esp_Idx)), esp_idx)
 end
 
 # type == PKT_C2U_DRONE_CONNECTED
 struct Packet_C2U_Drone_Connected <: Packet_C2U
     pkt::Basic_Packet
-    esp_idx::ESP_IDX
+    esp_idx::Esp_Idx
 end
 
 struct Receive_Drone_Connected
-    esp_idx::ESP_IDX
+    esp_idx::Esp_Idx
 end
 
 function read_and_eval_payload(::Val{PKT_C2U_DRONE_CONNECTED}, sp_idx)
-    esp_idx = Serialportlib.read_bytes_as_object(ESP_IDX, sp_idx=sp_idx)
+    esp_idx = Serialportlib.read_bytes_as_object(Esp_Idx, sp_idx=sp_idx)
     return Receive_Drone_Connected(esp_idx)
 end
     
 # type == PKT_U2C_DISCONNECT
 struct Packet_U2C_Disconnect <: Packet_U2C
     pkt::Basic_Packet
-    esp_idx::ESP_IDX
+    esp_idx::Esp_Idx
 end
 
 function Packet_U2C_Disconnect(esp_idx)
-    Packet_U2C_Disconnect(Basic_Packet(PKT_U2C_DISCONNECT, sizeof(ESP_IDX)), esp_idx)
+    Packet_U2C_Disconnect(Basic_Packet(PKT_U2C_DISCONNECT, sizeof(Esp_Idx)), esp_idx)
 end
 
 # type == PKT_C2U_DRONE_DISCONNECTED
 struct Packet_C2U_Drone_Disconnected <: Packet_C2U
     pkt::Basic_Packet
-    esp_idx::ESP_IDX
+    esp_idx::Esp_Idx
 end
 
 struct Receive_Drone_Disconnected
-    esp_idx::ESP_IDX
+    esp_idx::Esp_Idx
 end
 
 function read_and_eval_payload(::Val{PKT_C2U_DRONE_DISCONNECTED}, sp_idx)
-    esp_idx = Serialportlib.read_bytes_as_object(ESP_IDX, sp_idx=sp_idx)
+    esp_idx = Serialportlib.read_bytes_as_object(Esp_Idx, sp_idx=sp_idx)
     return Receive_Drone_Disconnected(esp_idx)
 end
     
@@ -112,7 +112,7 @@ end
 struct Packet_U2C_Controll_Commands <: Packet_U2C
     pkt::Basic_Packet
     ctrl_cmds::Payload_Controll_Commands
-    esp_idx::ESP_IDX
+    esp_idx::Esp_Idx
 end
 
 function Packet_U2C_Controll_Commands(ctrl_cmds::Payload_Controll_Commands, esp_idx)
@@ -136,16 +136,16 @@ struct Packet_C2U_Detected_Drones <: Packet_C2U
     detected_drones_length::Int32
     
     # The indices of the detected drones follow right after the packet
-    # In C you would write 'ESP_IDX detected_drones[0];' as last member of the struct
+    # In C you would write 'Esp_Idx detected_drones[0];' as last member of the struct
 end
 
 struct Receive_Detected_Drones{length}
-    detected_drones::NTuple{length, ESP_IDX}
+    detected_drones::NTuple{length, Esp_Idx}
 end
 
 function read_and_eval_payload(::Val{PKT_C2U_DETECTED_DRONES}, sp_idx)
     detected_drones_length = Serialportlib.read_bytes_as_object_packed(Int32, sp_idx=sp_idx)
-    detected_drones = Serialportlib.read_bytes_as_object_packed(NTuple{detected_drones_length, ESP_IDX}, sp_idx=sp_idx)
+    detected_drones = Serialportlib.read_bytes_as_object_packed(NTuple{detected_drones_length, Esp_Idx}, sp_idx=sp_idx)
     return Receive_Detected_Drones{detected_drones_length}(detected_drones)
 end    
 
@@ -163,17 +163,17 @@ end
 struct Packet_C2U_Imu_Data <: Packet_C2U
     pkt::Basic_Packet
     imu_data::Payload_Imu_Data
-    esp_idx::ESP_IDX
+    esp_idx::Esp_Idx
 end
 
 struct Receive_Imu_Data
-    esp_idx::ESP_IDX
+    esp_idx::Esp_Idx
     imu_data::Payload_Imu_Data
 end
 
 function read_and_eval_payload(::Val{PKT_C2U_IMU_DATA}, sp_idx)
     imu_data = Serialportlib.read_bytes_as_object_packed(Payload_Imu_Data, sp_idx=sp_idx)
-    esp_idx = Serialportlib.read_bytes_as_object_packed(ESP_IDX, sp_idx=sp_idx)
+    esp_idx = Serialportlib.read_bytes_as_object_packed(Esp_Idx, sp_idx=sp_idx)
     return Receive_Imu_Data(esp_idx, imu_data)
 end
 

@@ -110,7 +110,7 @@ static void receive_u2c_disconnect(Packet*);
 static void receive_u2c_controll_commands(Packet*);
 static void receive_u2c_get_detected_drones(Packet*);
 
-static const Packet_Info s_pkt_info_table[PKT_TYPE_SIZE] = {
+static const Packet_Info s_pkt_info_table[PKT_TYPE_UPPER_BOUND] = {
     [PKT_INVALID]                 = { 0 },
     
     [PKT_D2C_ADVERTISE]           = { .from_drone_handler = receive_d2c_drone_advertise },
@@ -326,7 +326,7 @@ static bool is_esp_mac_addr_idexed(uint8_t* mac_addr)
     return false;
 }
 
-static ESP_IDX get_esp_idx_from_mac_addr(uint8_t* mac_addr)
+static Esp_Idx get_esp_idx_from_mac_addr(uint8_t* mac_addr)
 {
     for (int idx = 0; idx < MAX_ESP_DEVICES; ++idx) {
         if (memcmp(&dgl.esp_devices[idx].mac_addr, mac_addr, ESP_NOW_ETH_ALEN) == 0) {
@@ -338,7 +338,7 @@ static ESP_IDX get_esp_idx_from_mac_addr(uint8_t* mac_addr)
     return INVALID_ESP_IDX;
 }
 
-static bool valid_esp_device_at_esp_idx(ESP_IDX esp_idx)
+static bool valid_esp_device_at_esp_idx(Esp_Idx esp_idx)
 {
     if (!(esp_idx >= 0 && esp_idx < MAX_ESP_DEVICES)) {
         DGL_ERROR("ESP-Index '%d' is not inside the valid range of [0, %d]", esp_idx, MAX_ESP_DEVICES);
@@ -420,7 +420,7 @@ static void receive_d2c_drone_advertise(Packet* pkt, uint8_t* mac_addr)
 
 static void receive_d2c_accept_connection(Packet* pkt, uint8_t* mac_addr)
 {
-    ESP_IDX esp_idx = get_esp_idx_from_mac_addr(mac_addr);
+    Esp_Idx esp_idx = get_esp_idx_from_mac_addr(mac_addr);
     if (esp_idx == INVALID_ESP_IDX) return;
     
     dgl.esp_devices[esp_idx].connected_state = ESP_CONNECTED;
@@ -436,7 +436,7 @@ static void receive_d2c_accept_connection(Packet* pkt, uint8_t* mac_addr)
 
 static void receive_d2c_accept_disconnect(Packet* pkt, uint8_t* mac_addr)
 {
-    ESP_IDX esp_idx = get_esp_idx_from_mac_addr(mac_addr);
+    Esp_Idx esp_idx = get_esp_idx_from_mac_addr(mac_addr);
     if (esp_idx == INVALID_ESP_IDX) return;
     
     dgl.esp_devices[esp_idx].connected_state = ESP_DISCONNECTED;
@@ -455,7 +455,7 @@ static void receive_d2c_imu_data(Packet* pkt, uint8_t* mac_addr)
     Packet_D2C_Imu_Data* pkt_d2c_imu_data = (Packet_D2C_Imu_Data*) pkt;
     assert(pkt_d2c_imu_data->pkt.type == PKT_D2C_IMU_DATA);
 
-    ESP_IDX esp_idx = get_esp_idx_from_mac_addr(mac_addr);
+    Esp_Idx esp_idx = get_esp_idx_from_mac_addr(mac_addr);
     if (esp_idx == INVALID_ESP_IDX) return;
 
     Packet_C2U_Imu_Data* pkt_c2u_imu_data = (Packet_C2U_Imu_Data*) create_packet(sizeof(Packet_C2U_Imu_Data), PKT_C2U_IMU_DATA);
@@ -470,7 +470,7 @@ static void receive_d2c_imu_data(Packet* pkt, uint8_t* mac_addr)
 
 static void xtask_try_to_connect_to_esp(void* voidp_esp_idx)
 {
-    ESP_IDX esp_idx = *((ESP_IDX*) voidp_esp_idx);
+    Esp_Idx esp_idx = *((Esp_Idx*) voidp_esp_idx);
     free(voidp_esp_idx);
 
     Packet_C2D_Connect* pkt_connect = (Packet_C2D_Connect*) create_packet(sizeof(Packet_C2D_Connect), PKT_C2D_CONNECT);
@@ -503,7 +503,7 @@ static void receive_u2c_connect(Packet* pkt)
     assert(pkt->type == PKT_U2C_CONNECT);
     Packet_U2C_Connect* pkt_connect = (Packet_U2C_Connect*) pkt;
 
-    ESP_IDX* esp_idx = malloc(sizeof(ESP_IDX));
+    Esp_Idx* esp_idx = malloc(sizeof(Esp_Idx));
     if (esp_idx == NULL) DGL_ABORT("receive_u2c_connect: malloc failed");
     
     *esp_idx = pkt_connect->esp_idx;
@@ -527,7 +527,7 @@ static void receive_u2c_connect(Packet* pkt)
 
 static void xtask_try_to_disconnect_from_esp(void* voidp_esp_idx)
 {
-    ESP_IDX esp_idx = *((ESP_IDX*) voidp_esp_idx);
+    Esp_Idx esp_idx = *((Esp_Idx*) voidp_esp_idx);
     free(voidp_esp_idx);
 
     Packet_C2D_Disconnect* pkt_disconnect = (Packet_C2D_Disconnect*) create_packet(sizeof(Packet_C2D_Disconnect), PKT_C2D_DISCONNECT);
@@ -562,7 +562,7 @@ static void receive_u2c_disconnect(Packet* pkt)
     assert(pkt->type == PKT_U2C_DISCONNECT);
     Packet_U2C_Disconnect* pkt_disconnect = (Packet_U2C_Disconnect*) pkt;
 
-    ESP_IDX* esp_idx = malloc(sizeof(ESP_IDX));
+    Esp_Idx* esp_idx = malloc(sizeof(Esp_Idx));
     if (esp_idx == NULL) DGL_ABORT("receive_u2c_disconnect: malloc failed");
     
     *esp_idx = pkt_disconnect->esp_idx;
@@ -603,11 +603,11 @@ static void receive_u2c_get_detected_drones(Packet* pkt)
     // Sends a PKT_C2U_DETECTED_DRONES back.
     
     int detected_drones_length = 0;
-    for (ESP_IDX esp_idx = 0; esp_idx < MAX_ESP_DEVICES; ++esp_idx) {
+    for (Esp_Idx esp_idx = 0; esp_idx < MAX_ESP_DEVICES; ++esp_idx) {
         if (valid_esp_device_at_esp_idx(esp_idx)) ++detected_drones_length;
     }
 
-    int detected_drones_pkt_size = sizeof(Packet_C2U_Detected_Drones) + detected_drones_length * sizeof(ESP_IDX);
+    int detected_drones_pkt_size = sizeof(Packet_C2U_Detected_Drones) + detected_drones_length * sizeof(Esp_Idx);
 
     Packet_C2U_Detected_Drones* pkt_detected_drones = (Packet_C2U_Detected_Drones*) create_packet(detected_drones_pkt_size, PKT_C2U_DETECTED_DRONES);
     if (pkt_detected_drones == NULL) return;
@@ -615,7 +615,7 @@ static void receive_u2c_get_detected_drones(Packet* pkt)
     pkt_detected_drones->detected_drones_length = detected_drones_length;
 
     int detected_drones_idx = 0;
-    for (ESP_IDX esp_idx = 0; esp_idx < MAX_ESP_DEVICES; ++esp_idx) {
+    for (Esp_Idx esp_idx = 0; esp_idx < MAX_ESP_DEVICES; ++esp_idx) {
         if (valid_esp_device_at_esp_idx(esp_idx)) {
             assert(detected_drones_idx < detected_drones_length);
             pkt_detected_drones->detected_drones[detected_drones_idx] = esp_idx;
@@ -628,7 +628,7 @@ static void receive_u2c_get_detected_drones(Packet* pkt)
     
     /* // For each detected drone the Serial_Packet_C2U_Detected_Drone is sent, then to inform that */
     /* // all detected drones have been sent, Serial_Packet_C2U_Detected_Drones_End is sent. */
-    /* for (ESP_IDX esp_idx = 0; esp_idx < MAX_ESP_DEVICES; ++esp_idx) { */
+    /* for (Esp_Idx esp_idx = 0; esp_idx < MAX_ESP_DEVICES; ++esp_idx) { */
     /*     if (valid_esp_device_at_esp_idx(esp_idx)) { */
     /*         Serial_Packet_C2U_Detected_Drone* spkt_detected_drone = (Serial_Packet_C2U_Detected_Drone*) create_serial_packet(sizeof(Serial_Packet_C2U_Detected_Drone)); */
     /*         if (spkt_detected_drone == NULL) continue; */
