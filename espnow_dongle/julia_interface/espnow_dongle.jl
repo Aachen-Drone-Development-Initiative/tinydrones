@@ -16,48 +16,48 @@ const INVALID_ESP_IDX = -1
 
     PKT_D2C_ADVERTISE = 1
     
-    PKT_U2C_CONNECT = 2
+    PKT_M2C_CONNECT_TO_DRONE = 2
     PKT_C2D_CONNECT = 3
     PKT_D2C_ACCEPT_CONNECTION = 4
-    PKT_C2U_DRONE_CONNECTED = 5
+    PKT_C2M_DRONE_CONNECTED = 5
     
-    PKT_U2C_DISCONNECT = 6
+    PKT_M2C_DISCONNECT_FROM_DRONE = 6
     PKT_C2D_DISCONNECT = 7
     PKT_D2C_ACCEPT_DISCONNECT = 8
-    PKT_C2U_DRONE_DISCONNECTED = 9
+    PKT_C2M_DRONE_DISCONNECTED = 9
     
-    PKT_U2C_CONTROLL_COMMANDS = 10
+    PKT_M2C_CONTROLL_COMMANDS = 10
     PKT_C2D_CONTROLL_COMMANDS = 11
 
-    PKT_U2C_GET_DETECTED_DRONES = 12
-    PKT_C2U_DETECTED_DRONES = 13
+    PKT_M2C_GET_DETECTED_DRONES = 12
+    PKT_C2M_DETECTED_DRONES = 13
 
     PKT_D2C_IMU_DATA = 14
-    PKT_C2U_IMU_DATA = 15
+    PKT_C2M_IMU_DATA = 15
     
-    PKT_C2U_LOG_MSG = 16
+    PKT_C2M_LOG_MSG = 16
 end
 
-abstract type Packet_U2C end
-abstract type Packet_C2U end
+abstract type Packet_M2C end
+abstract type Packet_C2M end
 
 @kwdef struct Basic_Packet
     type::Package_Type    = PKT_INVALID
     payload_size::Int16   = 0
 end
 
-# type == PKT_U2C_CONNECT
-struct Packet_U2C_Connect <: Packet_U2C
+# type == PKT_M2C_CONNECT_TO_DRONE
+struct Packet_M2C_Connect_To_Drone <: Packet_M2C
     pkt::Basic_Packet
     esp_idx::Esp_Idx
 end
 
-function Packet_U2C_Connect(esp_idx)
-    Packet_U2C_Connect(Basic_Packet(PKT_U2C_CONNECT, sizeof(Esp_Idx)), esp_idx)
+function Packet_M2C_Connect_To_Drone(esp_idx)
+    Packet_M2C_Connect_To_Drone(Basic_Packet(PKT_M2C_CONNECT_TO_DRONE, sizeof(Esp_Idx)), esp_idx)
 end
 
-# type == PKT_C2U_DRONE_CONNECTED
-struct Packet_C2U_Drone_Connected <: Packet_C2U
+# type == PKT_C2M_DRONE_CONNECTED
+struct Packet_C2M_Drone_Connected <: Packet_C2M
     pkt::Basic_Packet
     esp_idx::Esp_Idx
 end
@@ -66,23 +66,23 @@ struct Receive_Drone_Connected
     esp_idx::Esp_Idx
 end
 
-function read_and_eval_payload(::Val{PKT_C2U_DRONE_CONNECTED}, sp_idx)
+function read_and_eval_payload(::Val{PKT_C2M_DRONE_CONNECTED}, sp_idx)
     esp_idx = Serialportlib.read_bytes_as_object(Esp_Idx, sp_idx=sp_idx)
     return Receive_Drone_Connected(esp_idx)
 end
     
-# type == PKT_U2C_DISCONNECT
-struct Packet_U2C_Disconnect <: Packet_U2C
+# type == PKT_M2C_DISCONNECT_FROM_DRONE
+struct Packet_M2C_Disconnect_From_Drone <: Packet_M2C
     pkt::Basic_Packet
     esp_idx::Esp_Idx
 end
 
-function Packet_U2C_Disconnect(esp_idx)
-    Packet_U2C_Disconnect(Basic_Packet(PKT_U2C_DISCONNECT, sizeof(Esp_Idx)), esp_idx)
+function Packet_M2C_Disconnect_From_Drone(esp_idx)
+    Packet_M2C_Disconnect_From_Drone(Basic_Packet(PKT_M2C_DISCONNECT_FROM_DRONE, sizeof(Esp_Idx)), esp_idx)
 end
 
-# type == PKT_C2U_DRONE_DISCONNECTED
-struct Packet_C2U_Drone_Disconnected <: Packet_C2U
+# type == PKT_C2M_DRONE_DISCONNECTED
+struct Packet_C2M_Drone_Disconnected <: Packet_C2M
     pkt::Basic_Packet
     esp_idx::Esp_Idx
 end
@@ -91,7 +91,7 @@ struct Receive_Drone_Disconnected
     esp_idx::Esp_Idx
 end
 
-function read_and_eval_payload(::Val{PKT_C2U_DRONE_DISCONNECTED}, sp_idx)
+function read_and_eval_payload(::Val{PKT_C2M_DRONE_DISCONNECTED}, sp_idx)
     esp_idx = Serialportlib.read_bytes_as_object(Esp_Idx, sp_idx=sp_idx)
     return Receive_Drone_Disconnected(esp_idx)
 end
@@ -108,30 +108,30 @@ end
     throttle::Int16 = 0
 end
     
-# type == PKT_U2C_CONTROLL_COMMANDS
-struct Packet_U2C_Controll_Commands <: Packet_U2C
+# type == PKT_M2C_CONTROLL_COMMANDS
+struct Packet_M2C_Controll_Commands <: Packet_M2C
     pkt::Basic_Packet
     ctrl_cmds::Payload_Controll_Commands
     esp_idx::Esp_Idx
 end
 
-function Packet_U2C_Controll_Commands(ctrl_cmds::Payload_Controll_Commands, esp_idx)
-    Packet_U2C_Connect(Basic_Packet(PKT_U2C_CONTROLL_COMMANDS, packedsize(Packet_U2C_Controll_Commands) - packedsize(Basic_Packet)),
+function Packet_M2C_Controll_Commands(ctrl_cmds::Payload_Controll_Commands, esp_idx)
+    Packet_M2C_Connect_To_Drone(Basic_Packet(PKT_M2C_CONTROLL_COMMANDS, packedsize(Packet_M2C_Controll_Commands) - packedsize(Basic_Packet)),
                        ctrl_cmds,
                        esp_idx)
 end
 
-# type == PKT_U2C_GET_DETECTED_DRONES
-struct Packet_U2C_Get_Detected_Drones <: Packet_U2C
+# type == PKT_M2C_GET_DETECTED_DRONES
+struct Packet_M2C_Get_Detected_Drones <: Packet_M2C
     pkt::Basic_Packet
 end
 
-function Packet_U2C_Get_Detected_Drones()
-    Packet_U2C_Get_Detected_Drones(Basic_Packet(PKT_U2C_GET_DETECTED_DRONES, 0))
+function Packet_M2C_Get_Detected_Drones()
+    Packet_M2C_Get_Detected_Drones(Basic_Packet(PKT_M2C_GET_DETECTED_DRONES, 0))
 end
 
-# type == PKT_C2U_DETECTED_DRONES
-struct Packet_C2U_Detected_Drones <: Packet_C2U
+# type == PKT_C2M_DETECTED_DRONES
+struct Packet_C2M_Detected_Drones <: Packet_C2M
     pkt::Basic_Packet
     detected_drones_length::Int32
     
@@ -143,7 +143,7 @@ struct Receive_Detected_Drones{length}
     detected_drones::NTuple{length, Esp_Idx}
 end
 
-function read_and_eval_payload(::Val{PKT_C2U_DETECTED_DRONES}, sp_idx)
+function read_and_eval_payload(::Val{PKT_C2M_DETECTED_DRONES}, sp_idx)
     detected_drones_length = Serialportlib.read_bytes_as_object_packed(Int32, sp_idx=sp_idx)
     detected_drones = Serialportlib.read_bytes_as_object_packed(NTuple{detected_drones_length, Esp_Idx}, sp_idx=sp_idx)
     return Receive_Detected_Drones{detected_drones_length}(detected_drones)
@@ -159,8 +159,8 @@ struct Payload_Imu_Data
     acc_z::Float32
 end
 
-# type == PKT_C2U_IMU_DATA
-struct Packet_C2U_Imu_Data <: Packet_C2U
+# type == PKT_C2M_IMU_DATA
+struct Packet_C2M_Imu_Data <: Packet_C2M
     pkt::Basic_Packet
     imu_data::Payload_Imu_Data
     esp_idx::Esp_Idx
@@ -171,7 +171,7 @@ struct Receive_Imu_Data
     imu_data::Payload_Imu_Data
 end
 
-function read_and_eval_payload(::Val{PKT_C2U_IMU_DATA}, sp_idx)
+function read_and_eval_payload(::Val{PKT_C2M_IMU_DATA}, sp_idx)
     imu_data = Serialportlib.read_bytes_as_object_packed(Payload_Imu_Data, sp_idx=sp_idx)
     esp_idx = Serialportlib.read_bytes_as_object_packed(Esp_Idx, sp_idx=sp_idx)
     return Receive_Imu_Data(esp_idx, imu_data)
@@ -183,8 +183,8 @@ end
     LOG_MSG_ERROR = 2
 end
 
-# type == PKT_C2U_LOG_MSG
-struct Packet_C2U_Log_Msg <: Packet_C2U
+# type == PKT_C2M_LOG_MSG
+struct Packet_C2M_Log_Msg <: Packet_C2M
     pkt::Basic_Packet
     log_msg_type::Log_Msg_Type
     msg_length::Int32
@@ -198,7 +198,7 @@ struct Receive_Log_Msg
     log_msg::String
 end
 
-function read_and_eval_payload(::Val{PKT_C2U_LOG_MSG}, sp_idx)
+function read_and_eval_payload(::Val{PKT_C2M_LOG_MSG}, sp_idx)
     log_msg_type = Serialportlib.read_bytes_as_object_packed(Log_Msg_Type, sp_idx=sp_idx)
     msg_length = Int64(Serialportlib.read_bytes_as_object_packed(Int32, sp_idx=sp_idx))
     log_msg_cstr = Serialportlib.read_bytes_as_object_packed(NTuple{msg_length, Cchar}, sp_idx=sp_idx)
@@ -276,7 +276,7 @@ function read_all_packets(; sp_idx=Serialportlib.DEFAULT_SP_IDX)
     return packets
 end
 
-function write_packet(pkt::PacketT; sp_idx=Serialportlib.DEFAULT_SP_IDX)::UInt64 where { PacketT <: Packet_U2C }
+function write_packet(pkt::PacketT; sp_idx=Serialportlib.DEFAULT_SP_IDX)::UInt64 where { PacketT <: Packet_M2C }
     
     bytes_written = Serialportlib.write_bytes_from_object_packed(pkt, sp_idx=sp_idx)
     if bytes_written < 0

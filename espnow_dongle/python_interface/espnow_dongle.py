@@ -1,5 +1,7 @@
 import serial, ctypes, logging
 
+MAX_DRONE_NAME_LENGTH = 16
+
 SERIAL_DELIMITER = b'tiny'
 
 Esp_Idx = ctypes.c_int
@@ -9,18 +11,18 @@ INVALID_ESP_IDX = -1
 
 PKT_INVALID = 0
 
-# U2C - User to Controller
-PKT_U2C_CONNECT = 1
-PKT_U2C_DISCONNECT = 2
-PKT_U2C_CONTROLL_COMMANDS = 3
-PKT_U2C_GET_DETECTED_DRONES = 4
+# M2C - Master to Controller
+PKT_M2C_CONNECT_TO_DRONE = 1
+PKT_M2C_DISCONNECT_FROM_DRONE = 2
+PKT_M2C_CONTROLL_COMMANDS = 3
+PKT_M2C_GET_DETECTED_DRONES = 4
 
-# C2U - Controller to User
-PKT_C2U_DRONE_CONNECTED = 5
-PKT_C2U_DRONE_DISCONNECTED = 6
-PKT_C2U_DETECTED_DRONES = 7
-PKT_C2U_IMU_DATA = 8
-PKT_C2U_LOG_MSG = 9
+# C2M - Controller to Master
+PKT_C2M_DRONE_CONNECTED = 5
+PKT_C2M_DRONE_DISCONNECTED = 6
+PKT_C2M_DETECTED_DRONES = 7
+PKT_C2M_IMU_DATA = 8
+PKT_C2M_LOG_MSG = 9
 
 Packet_Type = ctypes.c_uint8
 
@@ -32,10 +34,10 @@ class Packet(ctypes.LittleEndianStructure):
         logging.error("This packet is not dynamically sized, yet the payload size exceeds the size of the packet.")
         return None
 
-class Packet_U2C(Packet):
+class Packet_M2C(Packet):
     pass
 
-class Packet_C2U(Packet):
+class Packet_C2M(Packet):
     pass
 
 class Payload(ctypes.LittleEndianStructure):
@@ -43,20 +45,20 @@ class Payload(ctypes.LittleEndianStructure):
 
 class Packet_Header(ctypes.LittleEndianStructure):
     _pack_ = 1
-    _fields_ = [("type", ctypes.c_uint8),
+    _fields_ = [("type", Packet_Type),
                 ("payload_size", ctypes.c_int16)]
     # The payload follows right after these fields in memory
     # In C you would write 'uint8_t payload[0];' as last member of the struct
 
-# U2C - User to Controller
+# M2C - Master to Controller
     
-# type == PKT_U2C_CONNECT
-class Packet_U2C_Connect(Packet_U2C):
+# type == PKT_M2C_CONNECT_TO_DRONE
+class Packet_M2C_Connect_To_Drone(Packet_M2C):
     _fields_ = [("header", Packet_Header),
                 ("esp_idx", Esp_Idx)]
 
-# type == PKT_U2C_DISCONNECT
-class Packet_U2C_Disconnect(Packet_U2C):
+# type == PKT_M2C_DISCONNECT_FROM_DRONE
+class Packet_M2C_Disconnect_From_Drone(Packet_M2C):
     _fields_ = [("header", Packet_Header),
                 ("esp_idx", Esp_Idx)]
 
@@ -71,30 +73,34 @@ class Payload_Controll_Commands(Payload):
                 ("roll",     ctypes.c_int16),
                 ("throttle", ctypes.c_int16)]
 
-# type == PKT_U2C_CONTROLL_COMMANDS
-class Packet_U2C_Controll_Commands(Packet_U2C):
+# type == PKT_M2C_CONTROLL_COMMANDS
+class Packet_M2C_Controll_Commands(Packet_M2C):
     _fields_ = [("header", Packet_Header),
                 ("ctrl_cmds", Payload_Controll_Commands),
                 ("esp_idx", Esp_Idx)]
 
-# type == PKT_U2C_GET_DETECTED_DRONES
-class Packet_U2C_Get_Detected_Drones(Packet_U2C):
+# type == PKT_M2C_GET_DETECTED_DRONES
+class Packet_M2C_Get_Detected_Drones(Packet_M2C):
     _fields_ = [("header", Packet_Header)]
 
-# C2U - Controller to User
+# C2M - Controller to Master
 
-# type == PKT_C2U_DRONE_CONNECTED
-class Packet_C2U_Drone_Connected(Packet_C2U):
+# type == PKT_C2M_DRONE_CONNECTED
+class Packet_C2M_Drone_Connected(Packet_C2M):
     _fields_ = [("header", Packet_Header),
                 ("esp_idx", Esp_Idx)]
 
-# type == PKT_C2U_DRONE_DISCONNECTED
-class Packet_C2U_Drone_Disconnected(Packet_C2U):
+# type == PKT_C2M_DRONE_DISCONNECTED
+class Packet_C2M_Drone_Disconnected(Packet_C2M):
     _fields_ = [("header", Packet_Header),
                 ("esp_idx", Esp_Idx)]
 
-# type == PKT_C2U_DETECTED_DRONES
-class Packet_C2U_Detected_Drones(Packet_C2U):
+class Payload_Detected_Drone(Payload):
+    _fields_ = [("esp_idx", Esp_Idx),
+                ("drone_name", ctypes.c_char * MAX_DRONE_NAME_LENGTH)]
+
+# type == PKT_C2M_DETECTED_DRONES
+class Packet_C2M_Detected_Drones(Packet_C2M):
     _fields_ = [("header", Packet_Header),
                 ("detected_drones_length", ctypes.c_int)]
     
@@ -102,11 +108,11 @@ class Packet_C2U_Detected_Drones(Packet_C2U):
     # In C you would write 'Esp_Idx detected_drones[0];' as last member of the struct
 
     def _eval_dynamic_part(self, bytes_buffer):
-        detected_drones_size = self.detected_drones_length * ctypes.sizeof(Esp_Idx)
+        detected_drones_size = self.detected_drones_length * ctypes.sizeof(Payload_Detected_Drone)
         if detected_drones_size != len(bytes_buffer):
-            logging.error("Size mismatch for PKT_C2U_DETECTED_DRONES")
+            logging.error("Size mismatch for PKT_C2M_DETECTED_DRONES")
             return None
-        detected_drones = (Esp_Idx * self.detected_drones_length).from_buffer(bytes_buffer)
+        detected_drones = (Payload_Detected_Drone * self.detected_drones_length).from_buffer(bytes_buffer)
         self.detected_drones = list(detected_drones) # attach a list of indices
 
 class Payload_Imu_Data(Payload):
@@ -118,8 +124,8 @@ class Payload_Imu_Data(Payload):
                 ("acc_y", ctypes.c_float),
                 ("acc_z", ctypes.c_float)]
 
-# type == PKT_C2U_IMU_DATA
-class Packet_C2U_Imu_Data(Packet_C2U):
+# type == PKT_C2M_IMU_DATA
+class Packet_C2M_Imu_Data(Packet_C2M):
     _fields_ = [("header", Packet_Header),
                 ("imu_data", Payload_Imu_Data),
                 ("esp_idx", Esp_Idx)]
@@ -130,34 +136,38 @@ LOG_MSG_ERROR = 2
 
 Log_Msg_Type = ctypes.c_uint8
 
-# type == PKT_C2U_LOG_MSG
-class Packet_C2U_Log_Msg(Packet_C2U):
-    _fields_ = [("header", Packet_Header),
-                ("log_msg_type", Log_Msg_Type),
+class Payload_Log(Payload):
+    _fields_ = [("type", Log_Msg_Type),
                 ("msg_length", ctypes.c_int)]
-    
+
+# type == PKT_C2M_LOG_MSG
+class Packet_C2M_Log_Msg(Packet_C2M):
+    _fields_ = [("header", Packet_Header),
+                ("esp_idx", Esp_Idx),
+                ("log", Payload_Log)]
+
     # The bytes of the msg follow right after the packet
     # In C you would write 'char msg[0];' as last member of the struct
 
     def _eval_dynamic_part(self, bytes_buffer):
         if self.msg_length != len(bytes_buffer):
-            logging.error("Size mismatch for PKT_C2U_LOG_MSG")
+            logging.error("Size mismatch for PKT_C2M_LOG_MSG")
             return None
         msg = (ctypes.c_char * self.msg_length).from_buffer(bytes_buffer)
         self.msg = msg.raw.decode("ascii")
 
 map_packet_type_to_packet = {
-    # U2C - User to Controller
-    PKT_U2C_CONNECT: Packet_U2C_Connect,
-    PKT_U2C_DISCONNECT: Packet_U2C_Disconnect,
-    PKT_U2C_CONTROLL_COMMANDS: Packet_U2C_Controll_Commands,
-    PKT_U2C_GET_DETECTED_DRONES: Packet_U2C_Get_Detected_Drones,
-    PKT_C2U_DRONE_CONNECTED: Packet_C2U_Drone_Connected,
-    # C2U - Controller to User
-    PKT_C2U_DRONE_DISCONNECTED: Packet_C2U_Drone_Disconnected,
-    PKT_C2U_DETECTED_DRONES: Packet_C2U_Detected_Drones,
-    PKT_C2U_IMU_DATA: Packet_C2U_Imu_Data,
-    PKT_C2U_LOG_MSG: Packet_C2U_Log_Msg,
+    # M2C - Master to Controller
+    PKT_M2C_CONNECT_TO_DRONE: Packet_M2C_Connect_To_Drone,
+    PKT_M2C_DISCONNECT_FROM_DRONE: Packet_M2C_Disconnect_From_Drone,
+    PKT_M2C_CONTROLL_COMMANDS: Packet_M2C_Controll_Commands,
+    PKT_M2C_GET_DETECTED_DRONES: Packet_M2C_Get_Detected_Drones,
+    PKT_C2M_DRONE_CONNECTED: Packet_C2M_Drone_Connected,
+    # C2M - Controller to Master
+    PKT_C2M_DRONE_DISCONNECTED: Packet_C2M_Drone_Disconnected,
+    PKT_C2M_DETECTED_DRONES: Packet_C2M_Detected_Drones,
+    PKT_C2M_IMU_DATA: Packet_C2M_Imu_Data,
+    PKT_C2M_LOG_MSG: Packet_C2M_Log_Msg,
 }
 
 class Dongle:
@@ -206,6 +216,8 @@ class Dongle:
             logging.error(f"Detected unknow or invalid packet-type '{header.type}'")
             return None
 
+        # TODO (yuzeni): At this point we should really block and wait for the bytes of the payload!!!!!!!!!!!!!!!
+        
         # Do we have enough bytes for the payload? 
         available_bytes = self.serialport.inWaiting()
         if available_bytes < header.payload_size:
@@ -233,8 +245,8 @@ class Dongle:
         return packets
 
     def write_packet(self, pkt) -> bool:
-        if not isinstance(pkt, Packet_U2C):
-            logging.error("The type of the provided packet is not a Packet_U2C subclass.")
+        if not isinstance(pkt, Packet_M2C):
+            logging.error("The type of the provided packet is not a Packet_M2C subclass.")
             return False
 
         # Write the delimiter, then actual packet. Flush to send it immediately

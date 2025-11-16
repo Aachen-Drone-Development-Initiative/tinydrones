@@ -1,6 +1,5 @@
 #include "controller_communication.h"
-
-#include "../../../shared_types/communication_packets.h"
+#include "communication_packets.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,18 +8,202 @@
 #include "freertos/FreeRTOS.h"
 #include "esp_log.h"
 
-#define BROADCAST_MAC_ADDR (uint8_t[]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
-#define ESP_NOW_QUEUE_LENGTH 10
-#define DEFAULT_ESPNOW_CHANNEL 0
+#define RECEIVE_CALLBACK_QUEUE_SIZE (10)
+#define SEND_CALLBACK_QUEUE_SIZE (10)
 
-static QueueHandle_t s_esp_now_recv_queue; // Queue for espnow packets
+// Special mac address for broadcasting to all devices in range, not just a single device
+static uint8_t s_broadcast_mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+static uint8_t s_zero_mac[ESP_NOW_ETH_ALEN]      = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
 typedef struct {
-    uint8_t src_mac_addr[6];
-    uint8_t des_mac_addr[6];
-    uint8_t len;
-    uint8_t* data;
-} ESPnow_Packet;
+    uint8_t mac_addr[ESP_NOW_ETH_ALEN];
+    esp_now_send_status_t status;
+} ESPNow_Send_Callback_Info;
+
+typedef struct {
+    uint8_t mac_addr[ESP_NOW_ETH_ALEN];
+    uint8_t *packet_data;
+    uint16_t packet_data_length;
+} ESPNow_Receive_Callback_Info;
+
+static void destroy_espnow_receive_callback_info(ESPNow_Receive_Callback_Info recv_info)
+{
+    free(recv_info.packet_data);
+}
+
+typedef void (Receive_Pkt_Handler*)(Packet*, uint8_t* mac_addr);
+
+static void recieve_c2d_connect(Packet*, uint8_t* mac_addr);
+static void recieve_c2d_disconnect(Packet*, uint8_t* mac_addr);
+static void recieve_c2d_controll_commands(Packet*, uint8_t* mac_addr);
+
+static const Receive_Pkt_Handler s_receive_pkt_handler_table[PKT_TYPE_UPPER_BOUND] =
+{
+    [PKT_C2D_CONNECT]           = { recieve_c2d_connect },
+    [PKT_C2D_DISCONNECT]        = { recieve_c2d_disconnect },
+    [PKT_C2D_CONTROLL_COMMANDS] = { recieve_c2d_controll_commands },
+};
+
+// Begin static variables
+
+static QueueHandle_t s_espnow_receive_callback_queue = NULL; // Queue for ESPNow_Receive_Callback_Info
+static QueueHandle_t s_espnow_send_callback_queue = NULL; // Queue for ESPNow_Send_Callback_Info
+static TaskHandle_t* s_ctrl_comm_task_handle = NULL;
+static TickType_t s_task_loop_delay = 0;
+static bool s_is_running = false;
+
+// End static variables
+
+static void espnow_send_cb(const esp_now_send_info_t *tx_info, esp_now_send_status_t status);
+static void espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *data, int length);
+
+void ctrl_comm_task(void*);
+
+void ctrl_comm_init_and_start_task(uint32_t task_priority,
+                                   uint32_t task_stack_depth,
+                                   TickType_t task_loop_delay)
+{
+    // Initalizing ESPNow
+    
+    if (esp_now_init() != ESP_OK)                           TINY_ABORT("init_espnow: esp_now_init failed");
+    if (esp_now_register_send_cb(espnow_send_cb) != ESP_OK) TINY_ABORT("init_espnow: esp_now_register_send_cb failed");
+    if (esp_now_register_recv_cb(espnow_recv_cb) != ESP_OK) TINY_ABORT("init_espnow: esp_now_register_recv_cb failed");
+    
+    // Adding broadcast peer to peer list
+    esp_now_peer_info_t *peer = malloc(sizeof(esp_now_peer_info_t));
+    if (peer == NULL) TINY_ABORT("init_espnow: malloc failed");
+    
+    memset(peer, 0, sizeof(esp_now_peer_info_t));
+    peer->channel = 0;
+    peer->ifidx = ESPNOW_WIFI_IF;
+    peer->encrypt = false;
+    memcpy(peer->peer_addr, s_broadcast_mac, sizeof(s_broadcast_mac));
+    
+    if (esp_now_add_peer(peer) != ESP_OK) TINY_ABORT("init_espnow: esp_now_add_peer failed");
+    
+    free(peer);
+
+    // Creating the task
+    
+    BaseType_t ret_task_create = xTaskCreate(ctrl_comm_task,
+                                             "ctrl_comm_task",
+                                             task_stack_depth,
+                                             NULL,
+                                             task_priority,
+                                             s_ctrl_comm_task_handle);
+
+    if (ret_task_create != pdPASS) TINY_ABORT("Failed to create task ctrl_comm_task");
+
+    s_task_loop_delay = task_loop_delay;
+    s_is_running = true;
+
+    // Initialize queues for receive and send events
+    s_espnow_receive_callback_queue = xQueueCreate(RECEIVE_CALLBACK_QUEUE_SIZE, sizeof(ESPNow_Receive_Callback_Info));
+    s_espnow_send_callback_queue    = xQueueCreate(SEND_CALLBACK_QUEUE_SIZE, sizeof(ESPNow_Send_Callback_Info));
+}
+
+void ctrl_comm_shutdown()
+{
+    s_is_running = false;
+    
+    vQueueDelete(s_espnow_receive_callback_queue);
+    vQueueDelete(s_espnow_send_callback_queue);
+
+    esp_now_deinit();
+}
+
+static Packet* create_packet(int packet_size, Packet_Type type)
+{
+    assert(packet_size >= sizeof(Packet));
+    Packet* pkt = malloc(packet_size);
+    if (pkt == NULL) TINY_ABORT("create_packet: malloc failed");
+
+    pkt->type = type;
+    pkt->payload_size = packet_size - sizeof(Packet);
+    
+    return pkt;
+}
+
+static void destroy_packet(Packet* pkt)
+{
+    free(pkt);
+}
+
+static bool send_packet_to_controller_with_espnow(uint8_t* mac_addr, Packet* pkt)
+{
+    if (esp_now_send(mac_addr, (uint8_t*) pkt, packet_size(pkt)) != ESP_OK) {
+        TINY_ERROR_NEVER_SEND("send_packet_to_controller_with_espnow: send packet error");
+        return false;
+    }
+    
+    return true;
+}
+
+bool ctrl_comm_is_connected()
+{
+    
+}
+
+void ctrl_comm_send_c2u_log(Log_Type type, const char* format, ...)
+{
+    va_list args;
+    
+    va_start(args, format);
+    int msg_len = vsnprintf(NULL, 0, format, args);
+    va_end(args);
+    
+    int pkt_log_size = sizeof(Packet_D2C_Log) + (msg_len + 1) * sizeof(char);
+
+    Packet_D2C_Log* pkt_log = (Packet_D2C_Log*) create_packet(pkt_log_size, PKT_D2C_LOG);
+    pkt_log->log_type = type;
+    pkt_log->msg_length = msg_len + 1;
+    
+    va_start(args, format);
+    vsnprintf(pkt_log->msg, msg_len + 1, format, args);
+    va_end(args);
+
+    send_packet_to_controller_with_espnow((Packet*) pkt_log);
+    destroy_packet((Packet*) pkt_log);
+}
+
+void ctrl_comm_task(void*)
+{
+    while (s_is_running)
+    {
+        // Handle incoming packets from the drone via ESP-Now
+        
+        ESPNow_Receive_Callback_Info recv_info = { 0 };
+        if (xQueueReceive(s_espnow_receive_callback_queue, &recv_info, 0))
+        {
+            Packet* pkt = (Packet*) recv_info.packet_data;
+            Receive_Pkt_Handler recv_pkt_handler = s_receive_pkt_handler_table[pkt->type];
+
+            if (recv_info.packet_data_length == packet_size(pkt))
+            {
+                if (recv_pkt_handler != NULL) {
+                    recv_pkt_handler(pkt, recv_info.mac_addr);
+                }
+                else TINY_ERROR("Received unexpected or unknown packet from the controller");
+            }
+            else TINY_ERROR("recv_info.packet_data_length != packet_size(pkt)");
+        }
+        destroy_espnow_receive_callback_info(recv_info);
+
+        // Handle ESP-Now send Callback
+
+        ESPNow_Send_Callback_Info send_info = { 0 };
+        if (xQueueReceive(s_espnow_send_callback_queue, &send_info, 0))
+        {
+            if (send_info.status == ESP_NOW_SEND_FAIL) {
+                TINY_DBG_INFO("Failed to packets to controller with MAC:"MACSTR, MAC2STR(send_info.mac_addr));
+            }
+        }
+
+        vTaskDelay(s_task_loop_delay);
+    }
+    
+    vTaskDelete(NULL); // Delete this task
+}
 
 /* void espnow_recv_cb(const esp_now_recv_info_t *recieved_packet, const uint8_t *data, int data_len) { */
 /*     ESPnow_Packet espnow_packet; */
