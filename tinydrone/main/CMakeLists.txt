@@ -1,10 +1,11 @@
 idf_component_register(SRCS "main.c"
   INCLUDE_DIRS "."
-  
+
   ## our components
   PRIV_REQUIRES mpu6050
   PRIV_REQUIRES controller_communication
   PRIV_REQUIRES motor_driver
+  PRIV_REQUIRES navigation
 
   ## esp-idf components
   PRIV_REQUIRES esp_driver_usb_serial_jtag
