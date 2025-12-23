@@ -6,6 +6,7 @@
 #include "freertos/task.h"
 
 #include <stdint.h>
+#include <math.h>
 #include <stdio.h>
 
 // our components
@@ -29,31 +30,45 @@
 static QueueHandle_t current_attitude_queue;
 
 static void tinydrone_task(void *) {
-  const float frequency_in_hz = 10.0;
-  TickType_t xLastWakeTime = xTaskGetTickCount();
+    const float frequency_in_hz = 10.0;
+    TickType_t xLastWakeTime = xTaskGetTickCount();
 
-  while (true) {
+    int time = 0;
+    while (true) {
+        // estimate orientation using IMU-component
+        attitude attitude;
+        int ticks_to_wait = pdMS_TO_TICKS(1000 / frequency_in_hz);
+        if (current_attitude_queue != NULL) {
+            BaseType_t xReturn = xQueueReceive(current_attitude_queue,
+                                                (void *)&attitude, ticks_to_wait);
 
-    // estimate orientation using IMU-component
-    attitude attitude;
-    int ticks_to_wait = pdMS_TO_TICKS(1000 / frequency_in_hz);
-    if (current_attitude_queue != NULL) {
-      BaseType_t xReturn = xQueueReceive(current_attitude_queue,
-                                         (void *)&attitude, ticks_to_wait);
+            ESP_LOGI("tinydrone_task", "gyro roll %f", attitude.roll_deg);
+            ESP_LOGI("tinydrone_task", "gyro pitch %f", attitude.pitch_deg);
+        } else {
+            ESP_LOGE("tinydrone_task", "Attitude queue not initialized");
+        }
+        // estimate orientation using IMU-component
 
-      ESP_LOGI("tinydrone_task", "gyro roll %f", attitude.roll_deg);
-      ESP_LOGI("tinydrone_task", "gyro pitch %f", attitude.pitch_deg);
-    } else {
-        ESP_LOGE("tinydrone_task", "Attitude queue not initialized");
+        // determine new motor signals using ori-estimate and ctrl-comm-component
+
+        // drive motors using
+        // silly test do not merge this to another branch
+        float motor_signal = 0.5+0.5*sin(time *2*M_PI / 100.0);
+        float motor_signal1 = 0.5+0.5*cos(time *2*M_PI / 100.0);
+        ESP_ERROR_CHECK(set_motor(1, motor_signal/2));
+        ESP_ERROR_CHECK(set_motor(2, motor_signal/10));
+        ESP_ERROR_CHECK(set_motor(3, motor_signal1/2));
+        ESP_ERROR_CHECK(set_motor(4, motor_signal1/10));
+        ESP_LOGI("tinydrone", "Motor signals: %d, %f", 1, motor_signal);
+        time++;
+
+        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(1000 / frequency_in_hz));
     }
     // determine new motor signals using ori-estimate and ctrl-comm-component
 
     // drive motors using
 
-    vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(1000 / frequency_in_hz));
-  }
-
-  vTaskDelete(NULL); // Delete this task
+    vTaskDelete(NULL); // Delete this task
 }
 
 
@@ -66,6 +81,7 @@ void app_main(void) {
 
 
   current_attitude_queue = xQueueCreate(1, sizeof(attitude));
+  ESP_ERROR_CHECK(init_motor_driver());
 
   // create tinydrone_task
   TaskHandle_t *tinydrone_task_handle = NULL;
@@ -88,4 +104,13 @@ void app_main(void) {
 
   // Returning from app_main, deletes the main task (which is now replaced by
   // the 'tinydrone_task')
+
+    // Not implemented yet
+    /* while (!ctrl_comm_is_connected()) { */
+    /*     vTaskDelay(100 / portTICK_PERIOD_MS); */
+    /*     printf("Waiting for connection with controller...\n"); */
+    /* } */
+
+
+    // Returning from app_main, deletes the main task (which is now replaced by the 'tinydrone_task')
 }
