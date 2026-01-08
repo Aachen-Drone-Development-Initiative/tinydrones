@@ -1,47 +1,61 @@
 #include "control.h"
+#include <math.h>
 
 // Control inputs
-static float s_u1; // u1: thrust up
-static float s_u2; // u2: roll/pitch control axis rotor 2 and 4
-static float s_u3; // u3: roll/pitch control axis rotor 1 and 3
-static float s_u4; // u4: yaw control axis
+// static float s_u1; // u1: thrust up
+// static float s_u2; // u2: roll/pitch control axis rotor 2 and 4
+// static float s_u3; // u3: roll/pitch control axis rotor 1 and 3
+// static float s_u4; // u4: yaw control axis
 
-//rotor forces
-static float s_f1; // f1: thrust rotor 1
-static float s_f2; // f2: thrust rotor 2
-static float s_f3; // f3: thrust rotor 3
-static float s_f4; // f4: thrust rotor 4
+// //rotor forces
+// static float s_f1; // f1: thrust rotor 1
+// static float s_f2; // f2: thrust rotor 2
+// static float s_f3; // f3: thrust rotor 3
+// static float s_f4; // f4: thrust rotor 4
 
-void con_control_inputs_to_rotor_forces(void) 
-{ // Using the linear equations given in the header to compute rotor forces 
-    s_f1 = 0.25f * s_u1 + 0.5f * s_u3 + 0.25f * s_u4;
-    s_f2 = -0.25f * s_u1 - 1.5f * s_u2 + 0.25f * s_u4;
-    s_f3 = 0.25f * s_u1 - 0.25f * s_u3 + 0.25f * s_u4;
-    s_f4 = -0.25f * s_u1 - 0.5f * s_u2 - 0.25f * s_u4;
+
+Motor_Values control_inputs_to_motor_values(Control_Inputs inputs)
+{ // Using the linear equations given in the header to compute rotor forces
+    // inverse:
+    // lgs: u1 = f1 + f2 + f3 + f4
+    // lgs: u2 = -f2 + f4
+    // lgs: u3 = f1 - f3
+    // lgs: u4 = f1 + -f2 + f3 - f4
+    Motor_Values motor_values = {
+        .motor_value_1 = 0.25f * inputs.u1 + 0.5f * inputs.u3 + 0.25f * inputs.u4,
+        .motor_value_2 = 0.25f * inputs.u1 - 0.5f * inputs.u2 - 0.25f * inputs.u4,
+        .motor_value_3 = 0.25f * inputs.u1 - 0.5f * inputs.u3 + 0.25f * inputs.u4,
+        .motor_value_4 = 0.25f * inputs.u1 + 0.5f * inputs.u2 - 0.25f * inputs.u4
+    };
+    return motor_values;
 }
 
-void con_reset_control_inputs(void) 
-{ // Resets control inputs to zero
-    s_u1 = 0.0f;
-    s_u2 = 0.0f;
-    s_u3 = 0.0f;
-    s_u4 = 0.0f;
+Motor_Values clip_motor_values(Motor_Values values) {
+    values.motor_value_1 = fmaxf(fminf(values.motor_value_1, 1.0f), 0.0f);
+    values.motor_value_2 = fmaxf(fminf(values.motor_value_2, 1.0f), 0.0f);
+    values.motor_value_3 = fmaxf(fminf(values.motor_value_3, 1.0f), 0.0f);
+    values.motor_value_4 = fmaxf(fminf(values.motor_value_4, 1.0f), 0.0f);
+    return values;
 }
 
-void con_reset_rotor_forces(void) 
-{ // Resets rotor forces to zero
-    s_f1 = 0.0f;
-    s_f2 = 0.0f;
-    s_f3 = 0.0f;
-    s_f4 = 0.0f;
+float pid_control_pitch(float pitch, float desired_pitch, float kp, float ki, float kd) {
+    static float integral = 0.0f;
+    static float previous_error = 0.0f;
+    float error = desired_pitch - pitch;
+    integral += error;
+    float derivative = error - previous_error;
+    float output = kp * error + ki * integral + kd * derivative;
+    previous_error = error;
+    return output;
 }
 
-void con_calculate_control_inputs(void) 
-{ //calculates u1, u2, u3, u4
-    #warning "calculate_control_inputs function is not implemented yet."
-}
-
-void con_control_rotors_with_f(void) 
-{ //uses f1, f2, f3, f4 to control the rotors, use setRotor(motor_id: int, value: float) from motor component
-    #warning "control_rotors_with_f function is not implemented yet."
+float pid_control_roll(float roll, float desired_roll, float kp, float ki, float kd) {
+    static float integral = 0.0f;
+    static float previous_error = 0.0f;
+    float error = desired_roll - roll;
+    integral += error;
+    float derivative = error - previous_error;
+    float output = kp * error + ki * integral + kd * derivative;
+    previous_error = error;
+    return output;
 }
