@@ -48,7 +48,7 @@ typedef struct {
     int16_t payload_size;
 } PACKED SHeader;
 
-/* Packet is the 'base class' for all the packets below.
+/* SPacket is the 'base class' for all the packets below.
    You can use it, when you want to abstract over all packets. */
 
 typedef struct {
@@ -96,13 +96,13 @@ typedef struct {
 typedef struct {
     SHeader header;
     Esp_Idx esp_idx;
-} PACKED Packet_C2M_Drone_Connected;
+} PACKED SPacket_C2M_Drone_Connected;
 
 // type == PKT_C2M_DRONE_DISCONNECTED
 typedef struct {
     SHeader header;
     Esp_Idx esp_idx;
-} PACKED Packet_C2M_Drone_Disconnected;
+} PACKED SPacket_C2M_Drone_Disconnected;
 
 typedef struct {
     Esp_Idx esp_idx;
@@ -114,20 +114,20 @@ typedef struct {
     SHeader header;
     int detected_drones_length;
     Payload_Detected_Drone detected_drones[0];
-} PACKED Packet_C2M_Detected_Drones;
+} PACKED SPacket_C2M_Detected_Drones;
 
 // type == PKT_C2M_IMU_DATA
 typedef struct {
     SHeader header;
     Payload_Imu_Data imu_data;
     Esp_Idx esp_idx;
-} PACKED Packet_C2M_Imu_Data;
+} PACKED SPacket_C2M_Imu_Data;
 
 // type == PKT_C2M_LOG
 typedef struct {
     SHeader header;
     Esp_Idx esp_idx;
     Payload_Log log;
-} PACKED Packet_C2M_Log;
+} PACKED SPacket_C2M_Log;
 
 #undef PACKED

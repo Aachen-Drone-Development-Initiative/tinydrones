@@ -9,14 +9,14 @@ enum {
     EPKT_INVALID = 0,
     EPKT_LOWER_BOUND = 0,
     
-    // C2D - Controller to Drone
+    // D2C - Drone to Controller
     EPKT_D2C_ADVERTISE = 1,
     EPKT_D2C_ACCEPT_CONNECTION = 2,
     EPKT_D2C_ACCEPT_DISCONNECT = 3,
     EPKT_D2C_IMU_DATA = 4,
     EPKT_D2C_LOG = 5,
 
-    // D2C - Drone to Controller
+    // C2D - Controller to Drone
     EPKT_C2D_CONNECT = 6,
     EPKT_C2D_DISCONNECT = 7,
     EPKT_C2D_CONTROLL_COMMANDS = 8,
