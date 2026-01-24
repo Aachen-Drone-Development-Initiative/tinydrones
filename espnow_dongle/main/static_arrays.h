@@ -3,15 +3,15 @@
  * 
  * typedef struct {
  *     <Type> items[<capacity>];
- *     size_t capacity;
  *     SemaphoreHandle_t mutex;
- * } Static_Array;
+ * } My_Array;
  */
+
+#define s_array_capacity(s_arr) (sizeof((s_arr)->items) / sizeof((s_arr)[0]))
 
 #define s_array_init(s_arr)                                             \
     do {                                                                \
         assert(s_arr->items != NULL);                                   \
-        s_arr->capacity = sizeof(s_arr->items) / sizeof(typeof(*s_arr->items)); \
         s_arr->mutex = xSemaphoreCreateBinary();                        \
         if (s_arr->mutex == NULL) {                                     \
             DGL_ABORT("s_array_init: failed to create binary semaphore"); \

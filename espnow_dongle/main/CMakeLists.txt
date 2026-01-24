@@ -1,6 +1,6 @@
 idf_component_register(SRCS "main.c"
   INCLUDE_DIRS "."
-  INCLUDE_DIRS "../../shared_types"
+  INCLUDE_DIRS "../../communication_packets"
   # for esp-now
   PRIV_REQUIRES nvs_flash
   PRIV_REQUIRES esp_event
