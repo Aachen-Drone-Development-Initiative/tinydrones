@@ -1,3 +1,5 @@
 sdkconfig*
 .vscode/
 todo.txt
+/venv/
+__pycache__
