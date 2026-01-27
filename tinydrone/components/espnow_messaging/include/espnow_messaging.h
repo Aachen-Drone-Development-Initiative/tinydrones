@@ -1,6 +1,6 @@
 #pragma once
 
-#include "packets_between_drone_and_controller.h"
+#include "espnow_packets.h"
 
 /* Call this before any other function in this header.
    Initializes ESPNow and starts the task that handles receiving/sending packets
@@ -21,11 +21,10 @@ void espnow_deinit();
 
 bool espnow_controller_connected();
 
+bool espnow_send_log_to_controller(const char* format, ...); /* works just like printf */
 
-bool espnow_send_log_to_controller(Pkt_Log_Type type, const char* format, ...); /* works just like printf */
-
-EHeader espnow_header_create(EPacket_Type type, size_t packet_size, EPacket_Flags flags); /* use this to initialize the header your EPacket */
+EHeader espnow_header_create(EPacket_Type type, size_t packet_size, EPacket_Flags flags); /* use this to initialize the header of your EPacket */
 
 bool espnow_get_latest_controll_commands(Payload_Controll_Commands* ctrl_cmds);
-bool espnow_packet_send_to_controller(EPacket* epkt);
 
+bool espnow_packet_send_to_controller(EPacket* epkt);

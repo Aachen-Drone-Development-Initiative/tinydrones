@@ -95,8 +95,8 @@ static esp_err_t tinydrone_init(gpio_num_t i2c_sda,
         }
     }
     
-    // Not yet implemented:
-    ctrl_comm_init_and_start_task(DEFAULT_TASK_PRIORITY, DEFAULT_TASK_STACK_DEPTH);
+    // Init espnow messaging
+    espnow_init_and_start_task(DEFAULT_TASK_PRIORITY, DEFAULT_TASK_STACK_DEPTH);
 
     return ESP_OK;
 }

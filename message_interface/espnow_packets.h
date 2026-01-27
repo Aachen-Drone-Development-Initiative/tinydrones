@@ -1,10 +1,11 @@
 #pragma once
 
+#include "packet_config.h"
 #include "packet_payloads.h"
 
 #include <stdint.h>
 
-#define PACKED __attribute__((packed))
+#define EPKT_MAX_SIZE 1470   /* max packet length for espnow v2, should be equal to ESP_NOW_MAX_DATA_LEN_V2 */
 
 enum {
     EPKT_INVALID = 0,
@@ -29,6 +30,8 @@ enum {
 typedef uint8_t EPacket_Flags;
 
 typedef uint32_t EPacket_ID;
+
+#define PACKED __attribute__((packed))
 
 typedef struct {
     EPacket_Type type;          /* The packet type */
@@ -67,7 +70,7 @@ typedef struct {
 
 typedef struct {
     EHeader header;             /* type == PKT_D2C_LOG */
-    Payload_Log log;
+    char msg[0];                /* msg_length = header.payload_size */
 } PACKED EPacket_D2C_Log;
 
 typedef struct {

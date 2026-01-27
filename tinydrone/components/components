@@ -1,8 +1,0 @@
-  /home/yuzeni/projekte/tinydrones/tinydrone/components:
-  insgesamt 20
-  drwxrwxr-x 5 yuzeni yuzeni 4096 Nov  6 12:53 .
-  drwxrwxr-x 5 yuzeni yuzeni 4096 Nov  8 14:26 ..
-  drwxrwxr-x 2 yuzeni yuzeni 4096 Nov  8 18:21 logging_and_errors
-  drwxrwxr-x 3 yuzeni yuzeni 4096 Nov  8 18:12 controller_communication
-  drwxrwxr-x 3 yuzeni yuzeni 4096 Nov  6 12:53 motor_driver
-  drwxrwxr-x 3 yuzeni yuzeni 4096 Nov  6 12:53 mpu6050

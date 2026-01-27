@@ -1,11 +1,10 @@
 #pragma once
 
+#include "packet_config.h"
+
 #include <stdint.h>
 
 #define PACKED __attribute__((packed))
-
-#define MAX_DRONE_NAME_LENGTH (12)
-#define MAX_PAYLOAD_SIZE () // TODO: this is not yet respected anywhere, probably put this in packet creation
 
 typedef struct {
     int16_t pitch;
@@ -26,19 +25,6 @@ typedef struct {
     float battery_voltage;
     // ...
 } PACKED Payload_Telemetry;
-
-enum {
-    PKT_LOG_NONE = 0,
-    PKT_LOG_DEBUG = 1,
-    PKT_LOG_ERROR = 2,
-};
-typedef uint8_t Pkt_Log_Type;
-
-typedef struct {
-    Pkt_Log_Type type;
-    int msg_length;
-    char msg[0];
-} PACKED Payload_Log;
 
 typedef struct {
     uint8_t connected : 1;

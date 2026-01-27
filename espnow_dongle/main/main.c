@@ -3,27 +3,28 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
-
 #include "nvs_flash.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "esp_mac.h"
 #include "esp_now.h"
-#include "esp_log.h"
 #include "esp_random.h"
+#include "sys/time.h"
 
 #include "driver/usb_serial_jtag.h"
 
 #define MAX_DRONES 128
 #define MAX_ESPNOW_PACKETS_WAITING_FOR_ACK 10
+#define MAX_LOG_MSG_LENGTH 1024
 
 #define ESPNOW_RECEIVE_INFO_QUEUE_SIZE 10
 #define ESPNOW_SEND_INFO_QUEUE_SIZE 10
 #define SERIAL_SEND_INFO_QUEUE_SIZE 10
 
-#define USB_SERIAL_JTAG_BUFFER_SIZE 1024
+#define USB_SERIAL_JTAG_BUFFER_SIZE (1024 * 10) // packets might be pretty big and we want many packets
 
 #define USB_SERIAL_WRITE_MAX_TICKS_TO_WAIT pdMS_TO_TICKS(10)
+#define USB_SERIAL_WRITE_LOG_MAX_TICKS_TO_WAIT pdMS_TO_TICKS(1000) // logs are important
 #define USB_SERIAL_READ_MAX_TICKS_TO_WAIT  pdMS_TO_TICKS(10)
 
 #define ESPNOW_MAXDELAY portMAX_DELAY
@@ -31,20 +32,19 @@
 #define ESPNOW_SEND_INFO_QUEUE_SEND_DELAY pdMS_TO_TICKS(10)
 #define SERIAL_SEND_INFO_QUEUE_SEND_DELAY pdMS_TO_TICKS(10)
 
+#define ESPNOW_WAIT_FOR_ACK_RESEND_TIMEOUT_MS 100 // 100 ms
+
 #define ESPNOW_WIFI_MODE WIFI_MODE_AP
 #define ESPNOW_WIFI_IF   ESP_IF_WIFI_AP
 
-/* Macros for logging. Because stdout is set to Serial/JTAG,
-   printf will just insert the text in our outgoing
-   serial-communication. The special delimiter signals that
-   the next bytes will be text instead of a packet. */
+static void serial_send_log(const char* format, ...);
 
-#define DGL_LOG_ERROR(format, ...) printf(SERIAL_LOG_MSG_DELIMITER_STRING " " format "\n", ##__VA_ARGS__)
+#define DGL_LOG_ERROR(format, ...) serial_send_log("ERROR: " format "\n", ##__VA_ARGS__)
 
 #define ENABLE_DEBUG_LOGS 1
 
 #if ENABLE_DEBUG_LOGS
-#    define DGL_LOG_DEBUG(format, ...) printf(SERIAL_LOG_MSG_DELIMITER_STRING " " format "\n", ##__VA_ARGS__)
+#    define DGL_LOG_DEBUG(format, ...) serial_send_log("DEBUG: " format "\n", ##__VA_ARGS__)
 #else
 #    define DGL_LOG_DEBUG(...)
 #endif
@@ -74,9 +74,7 @@ static inline void* __dgl_malloc_impl(size_t bytes, const char* file_name, int l
 }
 
 #define DGL_MALLOC(bytes) __dgl_malloc_impl(bytes, __FILE__, __LINE__)
-
-/* Special mac address for broadcasting to all devices in range */
-static uint8_t s_broadcast_mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+#define DGL_FREE(ptr) free(ptr)
 
 typedef struct {
     uint8_t mac_addr[ESP_NOW_ETH_ALEN];
@@ -87,6 +85,7 @@ typedef struct {
 typedef struct {
     uint8_t mac_addr[ESP_NOW_ETH_ALEN];
     EPacket* epkt;
+    int64_t last_send_time_us;
 } ESPNow_Send_Info;
 
 typedef struct {
@@ -115,6 +114,20 @@ ESPNow_Send_Info s_espnow_send_infos_waiting_for_ack[MAX_ESPNOW_PACKETS_WAITING_
  * Implementation
  */
 
+static void usb_serial_jtag_init()
+{
+    usb_serial_jtag_driver_config_t usb_serial_jtag_config = {
+        .rx_buffer_size = USB_SERIAL_JTAG_BUFFER_SIZE,
+        .tx_buffer_size = USB_SERIAL_JTAG_BUFFER_SIZE,
+    };
+
+    if (usb_serial_jtag_driver_install(&usb_serial_jtag_config) != ESP_OK) {
+        // Not using DGL_ABORT, becasue that one requires usb-serial/JTAG to log the error, instead just try to printf
+        printf("ERROR: init_usb_serial_jtag: usb_serial_jtag_driver_install failed, aborting...");
+        abort();
+    }
+}
+
 static void nvs_init()
 {
     esp_err_t ret = nvs_flash_init();
@@ -122,7 +135,7 @@ static void nvs_init()
         if (nvs_flash_erase() != ESP_OK) DGL_ABORT("init_nvs: nvs_flash_erase failed");
         ret = nvs_flash_init();
     }
-    if(ret != ESP_OK) DGL_ABORT("init_nvs: nvs_flash_init failed");
+    if(ret != ESP_OK) DGL_ABORT("init_nvs: nvs_flash_init failed, ESP_ERR: %s", esp_err_to_name(ret));
 }
 
 static void wifi_init(bool long_range_mode)
@@ -153,42 +166,36 @@ static void espnow_init()
     if (esp_now_register_recv_cb(espnow_receive_callback) != ESP_OK) DGL_ABORT("init_espnow: esp_now_register_recv_cb failed");
     
     // Adding Boradcast peer to peer list.
-    esp_now_peer_info_t *peer = DGL_MALLOC(sizeof(esp_now_peer_info_t));
-    memset(peer, 0, sizeof(esp_now_peer_info_t));
-    peer->channel = 0;
-    peer->ifidx = ESPNOW_WIFI_IF;
-    peer->encrypt = false;
-    memcpy(peer->peer_addr, s_broadcast_mac, sizeof(s_broadcast_mac));
+    esp_now_peer_info_t peer = {0};
+    static const uint8_t broadcast_mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+    memcpy(&peer.peer_addr, &broadcast_mac, ESP_NOW_ETH_ALEN);
+    peer.channel = 0;
+    peer.ifidx = ESPNOW_WIFI_IF;
     
-    if (esp_now_add_peer(peer) != ESP_OK) DGL_ABORT("init_espnow: esp_now_add_peer failed");
-    
-    free(peer);
-}
-
-static void usb_serial_jtag_init()
-{
-    usb_serial_jtag_driver_config_t usb_serial_jtag_config = {
-        .rx_buffer_size = USB_SERIAL_JTAG_BUFFER_SIZE,
-        .tx_buffer_size = USB_SERIAL_JTAG_BUFFER_SIZE,
-    };
-
-    if (usb_serial_jtag_driver_install(&usb_serial_jtag_config) != ESP_OK) {
-        DGL_ABORT("init_usb_serial_jtag: usb_serial_jtag_driver_install failed");
+    if (esp_now_add_peer(&peer) != ESP_OK) {
+        DGL_ABORT("init_espnow: esp_now_add_peer failed");
     }
 }
 
 static void dongle_init()
 {
+    usb_serial_jtag_init(); // init this first so that we have logging
     nvs_init();
     wifi_init(false);
     espnow_init();
-    usb_serial_jtag_init();
 
     s_espnow_receive_info_queue = xQueueCreate(ESPNOW_RECEIVE_INFO_QUEUE_SIZE, sizeof(ESPNow_Receive_Info));
     s_espnow_send_info_queue    = xQueueCreate(ESPNOW_SEND_INFO_QUEUE_SIZE, sizeof(ESPNow_Send_Info));
     s_serial_send_info_queue    = xQueueCreate(SERIAL_SEND_INFO_QUEUE_SIZE, sizeof(Serial_Send_Info));
 
     DGL_LOG_DEBUG("Dongle Initialized!");
+}
+
+static void espnow_receive_info_destroy(ESPNow_Receive_Info* e_recv_info)
+{
+    DGL_FREE(e_recv_info->packet_data);
+    e_recv_info->packet_data = NULL;
+    e_recv_info->packet_data_length = 0;
 }
 
 static void espnow_send_callback(const esp_now_send_info_t *tx_info, esp_now_send_status_t status)
@@ -200,13 +207,6 @@ static void espnow_send_callback(const esp_now_send_info_t *tx_info, esp_now_sen
     if (status != ESP_NOW_SEND_SUCCESS) {
         DGL_LOG_DEBUG("ESP-Now send callback reported that sending a packet failed.");
     }
-}
-
-static void espnow_receive_info_destroy(ESPNow_Receive_Info* e_recv_info)
-{
-    free(e_recv_info->packet_data);
-    e_recv_info->packet_data = NULL;
-    e_recv_info->packet_data_length = 0;
 }
 
 static void espnow_receive_callback(const esp_now_recv_info_t *recv_info, const uint8_t *data, int length)
@@ -255,40 +255,50 @@ static int get_drone_idx_from_drone_name(char* drone_name)
 static size_t espnow_packet_size(EHeader e_header) { return sizeof(EHeader) + e_header.payload_size; }
 static size_t serial_packet_size(SHeader s_header) { return sizeof(SHeader) + s_header.payload_size; }
 
-static EPacket* espnow_packet_create(EPacket_Type type, size_t packet_size, EPacket_Flags flags)
+static EHeader espnow_header_create(EPacket_Type type, size_t packet_size, EPacket_Flags flags)
 {
     assert(packet_size >= sizeof(EPacket));
-    
+    return (EHeader) {
+        .type = type,
+        .flags = flags,
+        .packet_id = esp_random(),
+        .payload_size = packet_size - sizeof(EPacket)
+    };
+}
+
+static SHeader serial_header_create(SPacket_Type type, size_t packet_size)
+{
+    assert(packet_size >= sizeof(SPacket));
+    return (SHeader) {
+        .delim = SERIAL_DELIMITER,
+        .type = type,
+        .payload_size = packet_size - sizeof(SPacket)
+    };
+}
+
+static EPacket* espnow_packet_create(EPacket_Type type, size_t packet_size, EPacket_Flags flags)
+{
     EPacket* epkt = DGL_MALLOC(packet_size);
-    epkt->header.type = type;
-    epkt->header.flags = flags;
-    epkt->header.packet_id = esp_random();
-    epkt->header.payload_size = packet_size - sizeof(EPacket);
-    
+    epkt->header = espnow_header_create(type, packet_size, flags);
     return epkt;
 }
 
 static SPacket* serial_packet_create(SPacket_Type type, size_t packet_size)
 {
-    assert(packet_size >= sizeof(SPacket));
-    
     SPacket* spkt = DGL_MALLOC(packet_size);
-    spkt->header.delim = SERIAL_DELIMITER;
-    spkt->header.type = type;
-    spkt->header.payload_size = packet_size - sizeof(SPacket);
-    
+    spkt->header = serial_header_create(type, packet_size);
     return spkt;
 }
 
 static void espnow_packet_destroy(EPacket** epkt)
 {
-    free(*epkt);
+    DGL_FREE(*epkt);
     *epkt = NULL;
 }
 
 static void serial_packet_destroy(SPacket** spkt)
 {
-    free(*spkt);
+    DGL_FREE(*spkt);
     *spkt = NULL;
 }
 
@@ -314,6 +324,24 @@ static void serial_send_info_add_to_send_queue(Serial_Send_Info s_send_info)
         DGL_LOG_DEBUG("serial_send_info_add_to_send_queue: Sending serial send info to queue failed. The queue might be full.");
         serial_packet_destroy(&s_send_info.spkt);
     }    
+}
+
+static void serial_send_log(const char* format, ...)
+{
+    va_list args;
+    
+    char pkt_buffer[sizeof(SPacket_C2M_Log) + MAX_LOG_MSG_LENGTH];
+    SPacket_C2M_Log* spkt_log = (SPacket_C2M_Log*) &pkt_buffer;
+
+    va_start(args, format);
+    int log_msg_len = vsnprintf(spkt_log->msg, MAX_LOG_MSG_LENGTH, format, args) + 1; // + 1 because '\0' is not counted
+    va_end(args);    
+
+    size_t packet_size = sizeof(SPacket_C2M_Log) + log_msg_len;
+    spkt_log->header = serial_header_create(SPKT_C2M_LOG, packet_size);
+    
+    usb_serial_jtag_write_bytes(spkt_log, packet_size, USB_SERIAL_WRITE_LOG_MAX_TICKS_TO_WAIT);
+    // Importantly we don't log any errors that might occur in this function!
 }
 
 void process_incoming_espnow_packet(ESPNow_Receive_Info recv_info)
@@ -386,6 +414,12 @@ void process_incoming_espnow_packet(ESPNow_Receive_Info recv_info)
 
         s_drone_infos[drone_idx].connected = false;
 
+        // Try to remove the drone to the espnow peer list
+        esp_err_t ret = esp_now_del_peer(s_drone_infos[drone_idx].mac_addr);
+        if (ret != ESP_OK) {
+            DGL_LOG_DEBUG("process_incoming_espnow_packet: Failed to delete Drone from peer list, ESP_ERR: %s", esp_err_to_name(ret));
+        }
+
         SPacket_C2M_Drone_Disconnected* spkt_disconnected = (SPacket_C2M_Drone_Disconnected*)
             serial_packet_create(SPKT_C2M_DRONE_DISCONNECTED, sizeof(SPacket_C2M_Drone_Disconnected));
         memcpy(&spkt_disconnected->drone_name, s_drone_infos[drone_idx].drone_name, MAX_DRONE_NAME_LENGTH);
@@ -397,10 +431,26 @@ void process_incoming_espnow_packet(ESPNow_Receive_Info recv_info)
 
     case EPKT_D2C_ACK_RECEIVE:
     {
+        EPacket_D2C_Ack_Receive* epkt_d2c_ack_recv = (EPacket_D2C_Ack_Receive*) epkt;
+        EPacket_ID acknowledged_packet_id = epkt_d2c_ack_recv->acknowledged_packet_id;
+        
         int drone_idx = get_drone_idx_from_mac_addr(recv_info.mac_addr);
         if (drone_idx < 0) break;
+        
+        int i = 0;
+        for (; i < MAX_ESPNOW_PACKETS_WAITING_FOR_ACK; ++i)
+        {
+            ESPNow_Send_Info* e_send_info = &s_espnow_send_infos_waiting_for_ack[i];
+            if (e_send_info->epkt != NULL && e_send_info->epkt->header.packet_id == acknowledged_packet_id)
+            {
+                espnow_packet_destroy(&e_send_info->epkt);
+                memset(&e_send_info->mac_addr, 0, ESP_NOW_ETH_ALEN);
+            }
+        }
 
-        // CONTINUE HERE !!!!!!!!!!
+        if (i == MAX_ESPNOW_PACKETS_WAITING_FOR_ACK) {
+            DGL_LOG_DEBUG("Received an EPKT_D2C_ACK_RECEIVE for packet '%d', but this packet was not in the 'wait for ack array'", acknowledged_packet_id);
+        }
         
     } break;
         
@@ -467,9 +517,19 @@ void process_incoming_serial_packet(SPacket* spkt)
         
         if (s_drone_infos[drone_idx].connected == false)
         {
-            EPacket_C2D_Connect* epkt_connect = DGL_MALLOC(sizeof(EPacket_C2D_Connect));
-            epkt_connect->header = espnow_header_create(EPKT_C2D_CONNECT, sizeof(EPacket_C2D_Connect), EPKT_FLAG_REQUIRE_ACK);
+            // Try to add the drone to the espnow peer list
+            esp_now_peer_info_t peer = {0};
+            memcpy(&peer.peer_addr, s_drone_infos[drone_idx].mac_addr);
+            peer.channel = 0;
+            peer.ifidx = ESPNOW_WIFI_IF;
             
+            esp_err_t ret = esp_now_add_peer(&peer);
+            if (ret != ESP_OK) {
+                DGL_LOG_ERROR("process_incoming_espnow_packet: Failed to add Drone to peer list, ESP_ERR: %s", esp_err_to_name(ret));
+                break;
+            }
+
+            EPacket_C2D_Connect* epkt_connect = (EPacket_C2D_Connect*) espnow_packet_create(EPKT_C2D_CONNECT, sizeof(EPacket_C2D_Connect), EPKT_FLAG_REQUIRE_ACK);
             ESPNow_Send_Info e_send_info = espnow_send_info_create((EPacket*) epkt_connect, drone_idx);
             espnow_send_info_add_to_send_queue(e_send_info);
         }
@@ -563,8 +623,18 @@ void send_all_queued_espnow_packets()
             // instead we return to continue where we left of the next time.
             return;
         }
-        
-        if (epkt->header.flags & EPKT_FLAG_REQUIRE_ACK) {
+
+        // Record the time this packet was sent
+        struct timeval tv_now;
+        gettimeofday(&tv_now, NULL);
+        e_send_info.last_send_time_us = (int64_t)tv_now.tv_sec * 1000000L + (int64_t)tv_now.tv_usec;
+
+        if (!(epkt->header.flags & EPKT_FLAG_REQUIRE_ACK)) {
+            // We should only deallocate the packet if we don't need to wait for an acknowledge
+            // because we possibly need to send it again.
+            espnow_packet_destroy(&epkt);
+        }
+        else {
             // find empty slot in the wait for ack array
             int first_empty_idx = 0;
             for (; first_empty_idx < MAX_ESPNOW_PACKETS_WAITING_FOR_ACK; ++first_empty_idx) {
@@ -573,15 +643,38 @@ void send_all_queued_espnow_packets()
 
             if (first_empty_idx < MAX_ESPNOW_PACKETS_WAITING_FOR_ACK) {
                 s_espnow_send_infos_waiting_for_ack[first_empty_idx] = e_send_info;
-                continue;
             }
             else {
                 DGL_LOG_DEBUG("send_all_queued_espnow_packets: Failed to add ESPNow Send Info to the 'wait for ack array', because all '%d' slots are full",
-                    MAX_ESPNOW_PACKETS_WAITING_FOR_ACK);
+                              MAX_ESPNOW_PACKETS_WAITING_FOR_ACK);
+                espnow_packet_destroy(&epkt);
             }
         }
+    }
 
-        espnow_packet_destroy(&epkt);
+    // Resend all the packets that are still waiting for an ack after some time passed
+    for (int i = 0; i < MAX_ESPNOW_PACKETS_WAITING_FOR_ACK; ++i)
+    {
+        ESPNow_Send_Info* e_send_info = &s_espnow_send_infos_waiting_for_ack[i];
+        if (e_send_info->epkt != NULL)
+        {
+            struct timeval tv_now;
+            gettimeofday(&tv_now, NULL);
+            int64_t time_us = (int64_t)tv_now.tv_sec * 1000000L + (int64_t)tv_now.tv_usec;
+
+            if (time_us - e_send_info->last_send_time_us > ESPNOW_WAIT_FOR_ACK_RESEND_TIMEOUT_MS * 1000L)
+            {
+                esp_err_t ret = esp_now_send(e_send_info->mac_addr, (uint8_t*) e_send_info->epkt, espnow_packet_size(e_send_info->epkt->header));
+                if (ret != ESP_OK) {
+                    DGL_LOG_DEBUG("send_all_queued_espnow_packets: esp_now_send failed");
+                    // When esp_now_send failed once, we shouldn't immeditely try to send more,
+                    // instead we return to continue where we left of the next time.
+                    return;
+                }
+
+                e_send_info->last_send_time_us = time_us;
+            }
+        }
     }
 }
 
@@ -617,7 +710,7 @@ int app_main(void)
     while (1)
     {
         ESPNow_Receive_Info e_recv_info = {0};
-        if (xQueueReceive(s_espnow_receive_info_queue, &e_recv_info, 0)) {
+        if (xQueueReceive(s_espnow_receive_info_queue, &e_recv_info, pdMS_TO_TICKS(0))) {
             process_incoming_espnow_packet(e_recv_info);
             espnow_receive_info_destroy(&e_recv_info);
         }

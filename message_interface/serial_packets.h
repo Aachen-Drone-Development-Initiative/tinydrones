@@ -1,10 +1,9 @@
 #pragma once
 
+#include "packet_config.h"
 #include "packet_payloads.h"
 
 #include <stdint.h>
-
-#define PACKED __attribute__((packed))
 
 enum {
     SPKT_INVALID = 0,
@@ -19,22 +18,25 @@ enum {
     SPKT_C2M_DRONE_INFOS = 98,            /* Controller sends the requested basic infos about available Drones to the Master */
     SPKT_C2M_DRONE_IMU_DATA = 99,         /* Controller sends IMU data of a Drone to the Master */
     SPKT_C2M_DRONE_TELEMETRY = 100,       /* Controller sends telemetry data of a Drone to the Master */
+    SPKT_C2M_LOG = 101,
 };
 typedef uint8_t SPacket_Type;
 
-/* This delimiter will be in front of all serial packets.
-   For example: ...0x796E6974 packet1 0x796E6974 packet2... */
+/* This delimiter makes up the first bytes of the serial packet header */
 
 typedef uint32_t Serial_Delimiter;
 #define SERIAL_DELIMITER ((Serial_Delimiter) 0x796E6974)
-#define SERIAL_DELIMITER_STRING "tiny" /* 0x796E6974 in ascii */
+#define SERIAL_DELIMITER_STRING "tiny" /* 0x796E6974 in ascii-codes */
 
-/* This delimiter plus the normal SERIAL_DELIMITER will be in front of log messages.
-   For example: ...0x67736D6C796E6974 "some log message" 0x796E6974 packet1... */
+/* /\* This delimiter will always appear in front of log messages in the serial communication stream. *\/ */
+/* /\* Its different from the normal delimiter, so that the receiving end can distinguish *\/ */
+/* /\* between normal packets and a simple log messages. *\/ */
 
-typedef uint64_t Serial_Log_Msg_Delimiter;
-#define SERIAL_LOG_MSG_DELIMITER ((Serial_Log_Msg_Delimiter) 0x67736D6C796E6974)
-#define SERIAL_LOG_MSG_DELIMITER_STRING "tinylsmg" /* 0x67736D6C796E6974 in ascii */
+/* typedef uint64_t Serial_Log_Msg_Delimiter; */
+/* #define SERIAL_LOG_MSG_DELIMITER ((Serial_Log_Msg_Delimiter) 0x67736D6C796E6974) */
+/* #define SERIAL_LOG_MSG_DELIMITER_STRING "tinylsmg" /\* 0x67736D6C796E6974 in ascii-codes *\/ */
+
+#define PACKED __attribute__((packed))
 
 typedef struct {
     Serial_Delimiter delim;     /* Delimiter is in fron of the Serial Packet */
@@ -101,5 +103,10 @@ typedef struct {
     Payload_Imu_Data imu_data;
     char drone_name[MAX_DRONE_NAME_LENGTH];
 } PACKED SPacket_C2M_Drone_Telemetry;
+
+typedef struct {
+    SHeader header;             /* type == SPKT_C2M_LOG */
+    char msg[0];                /* msg_length = header.payload_size */
+} PACKED SPacket_C2M_Log;
 
 #undef PACKED
