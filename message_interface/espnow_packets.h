@@ -1,3 +1,7 @@
+
+// TODO: EPKT_D2C_ACCEPT_CONNECT is actually necessary, because the drone can decline in case it is already connected
+// to a different controller.
+
 #pragma once
 
 #include "packet_config.h"
@@ -11,16 +15,15 @@ enum {
     EPKT_INVALID = 0,
     
     EPKT_D2C_ADVERTISE = 1,           /* Drone notifies the Controller that it is available */
-    EPKT_D2C_ACCEPT_CONNECTION = 2,   /* Drone accepts the connection which was initiated by the Controller */
-    EPKT_D2C_ACCEPT_DISCONNECT = 3,   /* Drone accepts the disconnection which was initiated by the Controller */
     EPKT_D2C_ACK_RECEIVE = 4,         /* Drone acknowledges that a specific packet was received */
     EPKT_D2C_LOG = 5,                 /* Drone sends log message to Controller */
     EPKT_D2C_IMU_DATA = 6,            /* Drone sends IMU data to Controller */
-    EPKT_D2C_TELEMETRY = 7,           /* Drone sends telemetry data to Controller */
+    /* EPKT_D2C_TELEMETRY = 7,           /\* Drone sends telemetry data to Controller *\/ */
 
     EPKT_C2D_CONNECT = 32,            /* Controller asks Drone to connect */
     EPKT_C2D_DISCONNECT = 33,         /* Controller asks Drone to disconnect */
     EPKT_C2D_CONTROLL_COMMANDS = 34,  /* Controller sends controll commands to the Drone */
+    EPKT_C2D_ACK_RECEIVE = 35,        /* Controller acknowledges that a specific packet was received */
 };
 typedef uint8_t EPacket_Type;
 
@@ -97,5 +100,10 @@ typedef struct {
     EHeader header;             /* type == PKT_C2D_CONTROLL_COMMANDS */
     Payload_Controll_Commands ctrl_cmds;
 } PACKED EPacket_C2D_Controll_Commands;
+
+typedef struct {
+    EHeader header;             /* type == EPKT_C2D_ACK_RECEIVE */
+    EPacket_ID acknowledged_packet_id;
+} PACKED EPacket_C2D_Ack_Receive;
 
 #undef PACKED

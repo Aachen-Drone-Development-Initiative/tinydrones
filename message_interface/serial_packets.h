@@ -5,6 +5,8 @@
 
 #include <stdint.h>
 
+#define SPKT_MAX_SIZE (1024 * 4)
+
 enum {
     SPKT_INVALID = 0,
     
