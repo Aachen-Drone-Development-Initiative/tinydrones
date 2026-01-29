@@ -106,7 +106,6 @@ class Packet_C2M_Detected_Drones(Packet_C2M):
     
     # The indices of the detected drones follow right after the packet
     # In C you would write 'Esp_Idx detected_drones[0];' as last member of the struct
-
     def _eval_dynamic_part(self, bytes_buffer):
         detected_drones_size = self.detected_drones_length * ctypes.sizeof(Payload_Detected_Drone)
         if detected_drones_size != len(bytes_buffer):

@@ -3,3 +3,4 @@ sdkconfig*
 todo.txt
 /venv/
 __pycache__
+/logs/

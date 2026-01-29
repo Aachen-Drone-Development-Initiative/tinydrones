@@ -1,0 +1,15 @@
+future==1.0.0
+iso8601==2.1.0
+keyboard==0.13.5
+markdown-it-py==4.0.0
+mdurl==0.1.2
+numpy==2.4.1
+prompt_toolkit==3.0.52
+pygame==2.6.1
+Pygments==2.19.2
+pyperclip==1.11.0
+PyYAML==6.0.3
+rich==14.2.0
+rich-argparse==1.7.2
+serial==0.0.97
+wcwidth==0.3.2

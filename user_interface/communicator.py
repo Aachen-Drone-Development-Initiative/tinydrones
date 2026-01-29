@@ -27,7 +27,7 @@ class Communcator():
         else:
             self.logger = logger
         self.logger.info("Init Communicator")
-        self.latest_buffer = None
+        self.shm = None
         self.setup_shared_memory_layout()
     
     def setup_shared_memory_layout(self):
@@ -61,19 +61,19 @@ class Communcator():
             self.logger.info(f"Open Shared Memory (name:{self.name_shared_memory})")
             return True
         
-        except:
-            self.logger.error(f"Shared Memory {self.name_shared_memory} is not existing.")
+        except Exception as e:
+            self.logger.error(f"Shared Memory {self.name_shared_memory} is not existing. Error {e}")
             return False
     
     def send_package(self, packages):
         # Send Package to shared memory
-        if sem:
+        with sem:
             match packages:
                 case espd.Packet_M2C_Connect_To_Drone():
                     # Save Connect Drone package
                     self.shm.buf[self.M2C_CONNECT_DRONE_OFFSET:self.M2C_CONNECT_DRONE_OFFSET + 
                                 ctypes.sizeof(espd.Packet_M2C_Connect_To_Drone)] = bytes(packages)
-                    self.logger.debug(f"Send M2C_Connect_Drone Package {packages.__str__}")
+                    self.logger.debug(f"Send M2C_Connect_Drone Package {packages}")
                 
                 case espd.Packet_M2C_Disconnect_From_Drone():
                     # Save Disconnect Drone packages
@@ -82,7 +82,7 @@ class Communcator():
                     
                     self.logger.debug(f"Send M2C_Disconnect_Drone Package {packages}")
                 
-                case espd.Packet_M2C_Controll_Commands:
+                case espd.Packet_M2C_Controll_Commands():
                     # Save Controll Commands packages
                     self.shm.buf[self.M2C_CONTROLL_DRONE_CMD_OFFSET:self.M2C_CONTROLL_DRONE_CMD_OFFSET + 
                                 ctypes.sizeof(espd.Packet_M2C_Controll_Commands)] = bytes(packages)
@@ -130,49 +130,52 @@ class Communcator():
     def recieve_packages(self):
         # Recieve Packages
         buffer = self.shm.buf
-
-        # No Changes in shared memory skip
-        if buffer == self.latest_buffer:
-            return
         
         self.logger.debug(f"Recieve Package {buffer}")
-        self.latest_buffer = buffer
 
-        self.shared_header = SharedHeader.from_buffer(buffer[0:ctypes.sizeof(SharedHeader)])
+        self.shared_header = SharedHeader.from_buffer_copy(buffer[0:ctypes.sizeof(SharedHeader)])
         
-        self.m2c_connect_drone = espd.PKT_M2C_CONNECT_TO_DRONE.from_bytes(buffer[
+        self.m2c_connect_drone = espd.Packet_M2C_Connect_To_Drone.from_buffer_copy(buffer[
             self.M2C_CONNECT_DRONE_OFFSET:self.M2C_CONNECT_DRONE_OFFSET + ctypes.sizeof(espd.Packet_M2C_Connect_To_Drone)
         ])
 
-        self.m2c_disconnect_drone = espd.PKT_M2C_DISCONNECT_FROM_DRONE.from_bytes(buffer[
+        self.m2c_disconnect_drone = espd.Packet_M2C_Disconnect_From_Drone.from_buffer_copy(buffer[
             self.M2C_DISCONNECT_DRONE_OFFSET:self.M2C_DISCONNECT_DRONE_OFFSET + ctypes.sizeof(espd.Packet_M2C_Disconnect_From_Drone)
         ])
 
-        self.m2c_controll_drone = espd.PKT_M2C_CONTROLL_COMMANDS.from_bytes(buffer[
+        self.m2c_controll_drone = espd.Packet_M2C_Controll_Commands.from_buffer_copy(buffer[
             self.M2C_CONTROLL_DRONE_CMD_OFFSET:self.M2C_CONTROLL_DRONE_CMD_OFFSET + ctypes.sizeof(espd.Packet_M2C_Controll_Commands)
         ])
 
-        self.m2c_get_detected_drones = espd.PKT_M2C_GET_DETECTED_DRONES.from_bytes(buffer[
+        self.m2c_get_detected_drones = espd.Packet_M2C_Get_Detected_Drones.from_buffer_copy(buffer[
             self.M2C_GET_DETECTED_DRONES_OFFSET:self.M2C_GET_DETECTED_DRONES_OFFSET + ctypes.sizeof(espd.Packet_M2C_Get_Detected_Drones)
         ])
 
-        self.c2m_drone_connected = espd.PKT_C2M_DRONE_CONNECTED.from_bytes(buffer[
+        self.c2m_drone_connected = espd.Packet_C2M_Drone_Connected.from_buffer_copy(buffer[
             self.C2M_DRONE_CONNECTED_OFFSET:self.C2M_DRONE_CONNECTED_OFFSET + ctypes.sizeof(espd.Packet_C2M_Drone_Connected)
         ])
 
-        self.c2m_drone_disconnected = espd.PKT_C2M_DRONE_DISCONNECTED.from_bytes(buffer[
+        self.c2m_drone_disconnected = espd.Packet_C2M_Drone_Disconnected.from_buffer_copy(buffer[
             self.C2M_DRONE_DISCONNECTED_OFFSET:self.C2M_DRONE_DISCONNECTED_OFFSET + ctypes.sizeof(espd.Packet_C2M_Drone_Disconnected)
         ])
 
-        self.c2m_detected_drones = espd.PKT_C2M_DETECTED_DRONES.from_bytes(buffer[
+        self.c2m_detected_drones = espd.Packet_C2M_Detected_Drones.from_buffer_copy(buffer[
             self.C2M_DETECTED_DRONES_OFFSET:self.C2M_DETECTED_DRONES_OFFSET + ctypes.sizeof(espd.Packet_C2M_Detected_Drones)
         ])
 
-        self.c2m_imu_data = espd.PKT_C2M_IMU_DATA.from_bytes(buffer[
+        self.c2m_imu_data = espd.Packet_C2M_Imu_Data.from_buffer_copy(buffer[
             self.C2M_IMU_DATA_OFFSET:self.C2M_IMU_DATA_OFFSET + ctypes.sizeof(espd.Packet_C2M_Imu_Data)
         ])
 
-        self.c2m_log_msg = espd.PKT_C2M_LOG_MSG.from_bytes(buffer[
+        self.c2m_log_msg = espd.Packet_C2M_Log_Msg.from_buffer_copy(buffer[
             self.C2M_LOG_MSG_OFFSET:self.C2M_LOG_MSG_OFFSET + ctypes.sizeof(espd.Packet_C2M_Log_Msg)
         ])
-
+    
+    def kill_shared_memory(self):
+        try:
+            # Close Shared Memory
+            self.shm.close()
+        
+        except Exception as e:
+            self.logger.error(f"Failed to close shared memory Error:{e}")
+            pass 

@@ -27,3 +27,8 @@
 ## Drone Controll State Flags
 ## Debug Modus
 
+# Python Path
+```
+export PYTHONPATH=$(pwd)
+```
+
