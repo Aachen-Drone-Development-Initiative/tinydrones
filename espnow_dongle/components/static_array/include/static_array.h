@@ -9,7 +9,7 @@ typedef struct {
   size_t capacity;
   SemaphoreHandle_t semaphore;
   void *data;
-} static_array;
+} static_array_handle;
 
 // TODO: Think about where the functions should block and wait for the semaphore
 
@@ -21,7 +21,7 @@ typedef struct {
  *
  * @return pointer to static array, NULL on failure
  */ 
-static_array *initArray(size_t element_count, size_t element_size);
+static_array_handle *static_array_init_array(size_t element_count, size_t element_size);
 
 /**
  * @brief dealloccates all memory reserved by the array
@@ -29,7 +29,7 @@ static_array *initArray(size_t element_count, size_t element_size);
  * This blocks until the semaphore on the array is released.
  * BE CAREFUL TO NOT ACCESS THIS ARRAY AFTERWARDS
  */
-void destroy_array(static_array *array);
+void static_array_destroy_array(static_array_handle *array);
 
 /**
  * directly accesses array element
@@ -40,7 +40,7 @@ void destroy_array(static_array *array);
  * 
  * @return pointer to element
  */
-void *getElement(static_array *array, size_t index);
+void *static_array_get_element(static_array_handle *array, size_t index);
 
 /**
  * copies array element into buffer
@@ -50,7 +50,7 @@ void *getElement(static_array *array, size_t index);
  * @param index index
  * @param buf buffer to copy into
  */
-void copyElement(static_array *array, size_t index, void *buf);
+void static_array_copy_element(static_array_handle *array, size_t index, void *buf);
 
 /**
  * copies buf into array at given index
@@ -61,4 +61,4 @@ void copyElement(static_array *array, size_t index, void *buf);
  * @param index index
  * @param buf buffer to copy from
  */
-void writeElement(static_array *array, size_t index, void *buf);
+void static_array_write_element(static_array_handle *array, size_t index, void *buf);
