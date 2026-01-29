@@ -1,9 +1,15 @@
 #include "espnow_messaging.h"
 
+// our components
+#include "logging.h"
+
 #include "freertos/FreeRTOS.h"
-#include "freertos/queue.h"
+#include "freertos/ringbuf.h"
+#include "esp_netif.h"
+#include "esp_wifi.h"
 #include "esp_now.h"
 #include "esp_random.h"
+#include "sys/time.h"
 
 // Buffer sizes (the packets life in these buffers, so they should be rather big)
 #define ESPNOW_RECEIVE_INFO_RINGBUF_SIZE (1024 * 10)
@@ -17,6 +23,7 @@
 #define ESPNOW_RECEIVE_INFO_RINGBUF_MAX_TICKS_TO_WAIT pdMS_TO_TICKS(10)
 #define ESPNOW_SEND_INFO_RINGBUF_MAX_TICKS_TO_WAIT pdMS_TO_TICKS(10)
 #define ESPNOW_BLOCK_UNTIL_CONTROLLER_CONNECTED_LOOP_DELAY pdMS_TO_TICKS(100)
+#define SERIAL_SEND_INFO_RINGBUF_MAX_TICKS_TO_WAIT pdMS_TO_TICKS(10)
 
 // ESP-Now settings
 #define ESPNOW_WIFI_MODE WIFI_MODE_STA // The Drone should be the Station mode, because it connects to the Controllers Access Point (AP)
@@ -91,11 +98,11 @@ static void espnow_receive_callback(const esp_now_recv_info_t *recv_info, const 
         return;
     }
 
-    memcpy(&e_recv_info->mac_addr, &recv_info->src_addr, ESP_NOW_ETH_ALEN);
+    memcpy(e_recv_info->mac_addr, recv_info->src_addr, ESP_NOW_ETH_ALEN);
     memcpy(&e_recv_info->epkt, data, length);
     // We should probably just remove the packet from the ringbuffer if this fails, but not sure if it ever would
     // do that in case this assert ever triggers.
-    DGL_ASSERT(e_recv_info->epkt.header.payload_size == length - sizeof(EPacket));
+    TINY_ASSERT(e_recv_info->epkt.header.payload_size == length - sizeof(EPacket));
 
     ret = xRingbufferSendComplete(s_espnow_receive_info_ringbuf, (void*) e_recv_info);
     if (ret != pdTRUE) {
@@ -115,17 +122,19 @@ static ESPNow_Send_Info* espnow_send_info_acquire_raw(size_t packet_size)
                                              SERIAL_SEND_INFO_RINGBUF_MAX_TICKS_TO_WAIT);
 
     if (ret != pdTRUE) {
-        DGL_LOG_DEBUG("espnow_send_info_acquire: Creating espnow send info in ringbuffer failed. The ringbuffer might be full.");
+        TINY_LOG_DEBUG("espnow_send_info_acquire: Creating espnow send info in ringbuffer failed. The ringbuffer might be full.");
         return NULL;
     }
 
     memset(e_send_info, 0, e_send_info_size);
-    memcpy(&e_send_info->mac_addr, &s_controller.mac_addr, ESP_NOW_ETH_ALEN);
+    memcpy(e_send_info->mac_addr, s_controller.mac_addr, ESP_NOW_ETH_ALEN);
+
+    return e_send_info;
 }
 
 static ESPNow_Send_Info* espnow_send_info_acquire(EPacket_Type type, size_t packet_size, EPacket_Flags flags)
 {
-    DGL_ASSERT(s_controller.connected == true);
+    TINY_ASSERT(s_controller.connected == true);
 
     ESPNow_Send_Info* e_send_info = espnow_send_info_acquire_raw(packet_size);
     if (e_send_info) {
@@ -156,6 +165,8 @@ static Interface_State take_interface_state()
     if (xSemaphoreTake(s_interface_state_mutex, portMAX_DELAY)) {
         return s_interface_state;
     }
+    
+    TINY_ABORT("unreachable");
 }
 
 static void give_interaface_state(Interface_State new_interface_state)
@@ -166,9 +177,9 @@ static void give_interaface_state(Interface_State new_interface_state)
 
 static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_info)
 {
-    EPacket* epkt = &e_recv_info->epkt;
+    const EPacket* epkt = &e_recv_info->epkt;
     
-    bool unknown_sender = (memcmp(&e_recv_info->mac_addr, &s_controller.mac_addr, ESP_NOW_ETH_ALEN) != 0);
+    bool unknown_sender = (memcmp(e_recv_info->mac_addr, s_controller.mac_addr, ESP_NOW_ETH_ALEN) != 0);
 
     if (unknown_sender)
     {
@@ -180,9 +191,9 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_inf
 
             // Now remove the previous controller from the peer list (if there was a previous controller).
             // We do this here instead of after receiving the disconnect packet from the previous controller,
-            // because we still need to acknowledge the disconnect packet. 
+            // because we still need to acknowledge the disconnect packet.
             if (s_controller.in_peer_list) {
-                esp_err_t ret = esp_now_del_peer(&s_controller.mac_addr);
+                esp_err_t ret = esp_now_del_peer(s_controller.mac_addr);
                 if (ret != ESP_OK) {
                     TINY_LOG_DEBUG("process_incoming_espnow_packet: Failed to delete Controller from peer list, ESP_ERR: %s", esp_err_to_name(ret));
                 }
@@ -190,7 +201,7 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_inf
         
             // Try to add the controller to the espnow peer list
             esp_now_peer_info_t peer = {0};
-            memcpy(&peer.peer_addr, &e_recv_info->mac_addr, ESP_NOW_ETH_ALEN);
+            memcpy(peer.peer_addr, e_recv_info->mac_addr, ESP_NOW_ETH_ALEN);
             peer.channel = 0;
             peer.ifidx = ESPNOW_WIFI_IF;
 
@@ -202,7 +213,7 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_inf
 
             s_controller.in_peer_list = true;
             s_controller.connected = true;
-            memcpy(&s_controller.mac_addr, e_recv_info->mac_addr, ESP_NOW_ETH_ALEN);
+            memcpy(s_controller.mac_addr, e_recv_info->mac_addr, ESP_NOW_ETH_ALEN);
 
             // Update the interface state
             Interface_State if_state = take_interface_state();
@@ -220,9 +231,11 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_inf
     if (epkt->header.flags & EPKT_FLAG_REQUIRE_ACK)
     {
         ESPNow_Send_Info* e_send_info = espnow_send_info_acquire(EPKT_C2D_ACK_RECEIVE, sizeof(EPacket_C2D_Ack_Receive), 0);
-        EPacket_C2D_Ack_Receive* epkt_c2d_ack = (EPacket_C2D_Ack_Receive*) e_send_info->epkt;
-        epkt_c2d_ack->acknowledged_packet_id = epkt->header.packet_id;
-        espnow_send
+        if (e_send_info) {
+            EPacket_C2D_Ack_Receive* epkt_c2d_ack = (EPacket_C2D_Ack_Receive*) &e_send_info->epkt;
+            epkt_c2d_ack->acknowledged_packet_id = epkt->header.packet_id;
+            espnow_send_info_complete(e_send_info);
+        }
     }
 
     switch (epkt->header.type) {
@@ -243,9 +256,11 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_inf
     
     case EPKT_C2D_CONTROLL_COMMANDS:
     {
+        EPacket_C2D_Controll_Commands* epkt_c2d_ctrl_cmds = (EPacket_C2D_Controll_Commands*) epkt;
+            
         // Update the interface state
         Interface_State if_state = take_interface_state();
-        if_state.ctrl_cmds = false;
+        if_state.ctrl_cmds = epkt_c2d_ctrl_cmds->ctrl_cmds;
         give_interaface_state(if_state);
         
     } break;
@@ -317,8 +332,8 @@ static void send_all_queued_espnow_packets()
                 memcpy(empty_slot, e_send_info, e_send_info_size);
             }
             else {
-                DGL_LOG_DEBUG("send_all_queued_espnow_packets: Failed to add ESPNow Send Info to the 'wait for ack array', because all '%d' slots are full",
-                              MAX_ESPNOW_PACKETS_WAITING_FOR_ACK);
+                TINY_LOG_DEBUG("send_all_queued_espnow_packets: Failed to add ESPNow Send Info to the 'wait for ack array', because all '%d' slots are full",
+                               MAX_ESPNOW_PACKETS_WAITING_FOR_ACK);
             }
         }
 
@@ -339,7 +354,7 @@ static void send_all_queued_espnow_packets()
             {
                 esp_err_t ret = esp_now_send(e_send_info->mac_addr, (uint8_t*) &e_send_info->epkt, espnow_packet_size(e_send_info->epkt.header));
                 if (ret != ESP_OK) {
-                    DGL_LOG_DEBUG("send_all_queued_espnow_packets: esp_now_send failed");
+                    TINY_LOG_DEBUG("send_all_queued_espnow_packets: esp_now_send failed");
                     // When esp_now_send failed once, we shouldn't immeditely try to send more,
                     // instead we return to continue where we left of the next time.
                     return;
@@ -373,8 +388,24 @@ static void espnow_messaging_task(void*)
 
 // Public API
 
-void espnow_init_and_start_task(uint32_t task_priority, uint32_t task_stack_size)
+void espnow_init_and_start_task(bool long_range_wifi, uint32_t task_priority, uint32_t task_stack_size)
 {
+    // Init wifi
+    if (esp_netif_init() != ESP_OK)                TINY_ABORT("espnow_init_and_start_task: esp_netif_init failed");
+    if (esp_event_loop_create_default() != ESP_OK) TINY_ABORT("espnow_init_and_start_task: esp_event_loop_create_default failed");
+    
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    
+    if (esp_wifi_init(&cfg) != ESP_OK)                 TINY_ABORT("espnow_init_and_start_task: esp_wifi_init failed");
+    if (esp_wifi_set_mode(ESPNOW_WIFI_MODE) != ESP_OK) TINY_ABORT("espnow_init_and_start_task: esp_wifi_set_mode failed");
+    if (esp_wifi_start() != ESP_OK)                    TINY_ABORT("espnow_init_and_start_task: esp_wifi_start failed");
+
+    if (long_range_wifi) {
+        if (esp_wifi_set_protocol(ESPNOW_WIFI_IF, WIFI_PROTOCOL_11B|WIFI_PROTOCOL_11G|WIFI_PROTOCOL_11N|WIFI_PROTOCOL_LR) != ESP_OK) {
+            TINY_ABORT("init_wifi: esp_wifi_set_protocol failed");
+        }
+    }
+
     TINY_ASSERT(esp_now_init() == ESP_OK);
     TINY_ASSERT(esp_now_register_send_cb(espnow_send_callback) == ESP_OK);
     TINY_ASSERT(esp_now_register_recv_cb(espnow_receive_callback) == ESP_OK);
@@ -382,7 +413,7 @@ void espnow_init_and_start_task(uint32_t task_priority, uint32_t task_stack_size
     // Adding boradcast mac address to peer list.
     esp_now_peer_info_t peer = {0};
     static const uint8_t broadcast_mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF }; // TODO: test if this can just go in the {.x=y} initializer
-    memcpy(&peer.peer_addr, &broadcast_mac, ESP_NOW_ETH_ALEN);
+    memcpy(peer.peer_addr, broadcast_mac, ESP_NOW_ETH_ALEN);
     peer.channel = 0;
     peer.ifidx = ESPNOW_WIFI_IF;
     
@@ -421,10 +452,9 @@ void espnow_block_until_controller_connected()
 
 bool espnow_send_log_to_controller(const char* format, ...)
 {
-    // Importantly we don't log any errors that might occur in this function!  
+    // Importantly we don't log any errors that might occur in this function!
     va_list args;
 
-    // Allocate statically to reduce stress from calling this function in critical situations
     static char pkt_buffer[EPKT_MAX_SIZE];
     EPacket_D2C_Log* epkt_log = (EPacket_D2C_Log*) &pkt_buffer;
 
@@ -435,7 +465,7 @@ bool espnow_send_log_to_controller(const char* format, ...)
     size_t packet_size = sizeof(EPacket_D2C_Log) + log_msg_len;
     epkt_log->header = espnow_header_create(EPKT_D2C_LOG, packet_size, 0);
     
-    espnow_packet_send_to_controller((EPacket*) epkt_log);
+    return espnow_packet_send_to_controller((EPacket*) epkt_log);
 }
 
 bool espnow_get_latest_controll_commands(Payload_Controll_Commands* ctrl_cmds, TickType_t ticks_to_wait)
@@ -468,8 +498,10 @@ bool espnow_packet_send_to_controller(EPacket* epkt)
 {
     size_t epkt_size = espnow_packet_size(epkt->header);
     ESPNow_Send_Info* e_send_info = espnow_send_info_acquire_raw(epkt_size);
-    if (!e_send_info) return false;
-    memcpy(&e_send_info->epkt, epkt, epkt_size);
-
-    espnow_send_info_complete(e_send_info);
+    if (e_send_info) {
+        memcpy(&e_send_info->epkt, epkt, epkt_size);
+        espnow_send_info_complete(e_send_info);
+        return true;
+    }
+    return false;
 }

@@ -1,11 +1,13 @@
 #pragma once
 
 #include "espnow_packets.h"
+#include "freertos/FreeRTOS.h"
+#include "stdbool.h"
 
 // Call this before any other function in this header.
 // Initializes ESPNow and starts the task that handles receiving/sending packets
 // to and from the controller.
-void espnow_init_and_start_task(uint32_t task_priority, uint32_t task_stack_depth);
+void espnow_init_and_start_task(bool long_range_wifi, uint32_t task_priority, uint32_t task_stack_size);
 
 // Terminates the task that handles receiving/sending packets, frees
 // any allocated memory, resets all values and deinitializes ESPNow.

@@ -1,18 +1,17 @@
-#include "esp_log.h"
 #include "driver/i2c_master.h"
 #include "driver/gpio.h"
+#include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#include <stdio.h>
-
-// our components
+/* // our components */
 #include "mpu6050.h"
-#include "controller_communication.h"
+#include "espnow_messaging.h"
+#include "logging.h"
 #include "motor_driver.h"
 
 #define DEFAULT_TASK_PRIORITY    (5)
-#define DEFAULT_TASK_STACK_DEPTH (200)
+#define DEFAULT_TASK_STACK_DEPTH (1000)
 
 #define TINYDRONE_TASK_PRIORITY    (DEFAULT_TASK_PRIORITY)
 #define TINYDRONE_TASK_STACK_DEPTH (DEFAULT_TASK_STACK_DEPTH * 5)
@@ -22,23 +21,21 @@ static MPU6050_Handle           s_mpu = {0};
 
 static void tinydrone_task(void*)
 {
-    while (true) {
+    while (true)
+    {
 
-        // estimate orientation using IMU-component
-    
-        // determine new motor signals using ori-estimate and ctrl-comm-component
-    
-        // drive motors using
+        espnow_block_until_controller_connected();
+
+        espnow_send_log_to_controller("hello dongle\n");
         
-        vTaskDelay(100 / portTICK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 
     vTaskDelete(NULL); // Delete this task
 }
 
 static esp_err_t tinydrone_init(gpio_num_t i2c_sda,
-                                gpio_num_t i2c_scl,
-                                bool enable_long_range_wifi)
+                                gpio_num_t i2c_scl)
 {
     // init I2C
     {
@@ -62,41 +59,21 @@ static esp_err_t tinydrone_init(gpio_num_t i2c_sda,
     {    
         esp_err_t ret = nvs_flash_init();
         if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-            if (nvs_flash_erase() != ESP_OK) DGL_ABORT("init_nvs: nvs_flash_erase failed");
+            if (nvs_flash_erase() != ESP_OK) TINY_ABORT("init_nvs: nvs_flash_erase failed");
             ret = nvs_flash_init();
         }
-        if(ret != ESP_OK) DGL_ABORT("init_nvs: nvs_flash_init failed");
+        if(ret != ESP_OK) TINY_ABORT("init_nvs: nvs_flash_init failed");
     }
 
     // init MPU6050
-    {
-        // TODO: Make this also create a task with specifiable priority
-        if (mpu6050_init(&s_mpu, s_i2c_master_bus, MPU6050_PLUS_MINUS_500_DEG_PER_SECOND, MPU6050_PLUS_MINUS_2G) != ESP_OK) {
-            // TODO: Do good error reporting
-            return ESP_FAIL;
-        }
-    }
-
-    // Init wifi
-    {
-        if (esp_netif_init() != ESP_OK)                DGL_ABORT("init_wifi: esp_netif_init failed");
-        if (esp_event_loop_create_default() != ESP_OK) DGL_ABORT("init_wifi: esp_event_loop_create_default failed");
-    
-        wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    
-        if (esp_wifi_init(&cfg) != ESP_OK)                 DGL_ABORT("init_wifi: esp_wifi_init failed");
-        if (esp_wifi_set_mode(ESPNOW_WIFI_MODE) != ESP_OK) DGL_ABORT("init_wifi: esp_wifi_set_mode failed");
-        if (esp_wifi_start() != ESP_OK)                    DGL_ABORT("init_wifi: esp_wifi_start failed");
-
-        if (enable_long_range_wifi) {
-            if (esp_wifi_set_protocol(ESPNOW_WIFI_IF, WIFI_PROTOCOL_11B|WIFI_PROTOCOL_11G|WIFI_PROTOCOL_11N|WIFI_PROTOCOL_LR) != ESP_OK) {
-                DGL_ABORT("init_wifi: esp_wifi_set_protocol failed");
-            }
-        }
+    // TODO: Make this also create a task with specifiable priority
+    if (mpu6050_init(&s_mpu, s_i2c_master_bus, MPU6050_PLUS_MINUS_500_DEG_PER_SECOND, MPU6050_PLUS_MINUS_2G) != ESP_OK) {
+        // TODO: Do good error reporting
+        return ESP_FAIL;
     }
     
     // Init espnow messaging
-    espnow_init_and_start_task(DEFAULT_TASK_PRIORITY, DEFAULT_TASK_STACK_DEPTH);
+    /* espnow_init_and_start_task(false, DEFAULT_TASK_PRIORITY, DEFAULT_TASK_STACK_DEPTH); */
 
     return ESP_OK;
 }
@@ -110,12 +87,6 @@ void app_main(void)
         printf("ERROR: tinydrone_init() failed, halting...\n");
         while (true); // halts everything
     }
-
-    // Not implemented yet
-    /* while (!ctrl_comm_is_connected()) { */
-    /*     vTaskDelay(100 / portTICK_PERIOD_MS); */
-    /*     printf("Waiting for connection with controller...\n"); */
-    /* } */
 
     TaskHandle_t* tinydrone_task_handle = NULL;
 

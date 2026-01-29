@@ -4,6 +4,7 @@
 #include "string.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/ringbuf.h"
+#include "freertos/semphr.h"
 #include "nvs_flash.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
@@ -159,7 +160,7 @@ static void espnow_init()
     // Adding Boradcast peer to peer list.
     esp_now_peer_info_t peer = {0};
     static const uint8_t broadcast_mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
-    memcpy(&peer.peer_addr, &broadcast_mac, ESP_NOW_ETH_ALEN);
+    memcpy(peer.peer_addr, broadcast_mac, ESP_NOW_ETH_ALEN);
     peer.channel = 0;
     peer.ifidx = ESPNOW_WIFI_IF;
     
@@ -211,7 +212,7 @@ static void espnow_receive_callback(const esp_now_recv_info_t *recv_info, const 
         return;
     }
 
-    memcpy(&e_recv_info->mac_addr, &recv_info->src_addr, ESP_NOW_ETH_ALEN);
+    memcpy(e_recv_info->mac_addr, recv_info->src_addr, ESP_NOW_ETH_ALEN);
     memcpy(&e_recv_info->epkt, data, length);
     // We should probably just remove the packet from the ringbuffer if this fails, but not sure if it ever would
     // do that in case this assert ever triggers.
@@ -226,7 +227,7 @@ static void espnow_receive_callback(const esp_now_recv_info_t *recv_info, const 
 static int get_drone_idx_from_mac_addr(const uint8_t* mac_addr)
 {
     for (int i = 0; i < MAX_DRONES; ++i) {
-        if (memcmp(&s_drone_infos[i].mac_addr, mac_addr, ESP_NOW_ETH_ALEN) == 0) {
+        if (memcmp(s_drone_infos[i].mac_addr, mac_addr, ESP_NOW_ETH_ALEN) == 0) {
             return i;
         }
     }
@@ -238,7 +239,7 @@ static int get_drone_idx_from_mac_addr(const uint8_t* mac_addr)
 static int get_drone_idx_from_drone_name(const char* drone_name)
 {
     for (int i = 0; i < MAX_DRONES; ++i) {
-        if (memcmp(&s_drone_infos[i].drone_name, drone_name, MAX_DRONE_NAME_LENGTH) == 0) {
+        if (memcmp(s_drone_infos[i].drone_name, drone_name, MAX_DRONE_NAME_LENGTH) == 0) {
             return i;
         }
     }
@@ -288,7 +289,7 @@ static ESPNow_Send_Info* espnow_send_info_acquire(int dest_drone_idx, EPacket_Ty
         return NULL;
     }
     
-    memcpy(&e_send_info->mac_addr, &s_drone_infos[dest_drone_idx].mac_addr, ESP_NOW_ETH_ALEN);
+    memcpy(e_send_info->mac_addr, s_drone_infos[dest_drone_idx].mac_addr, ESP_NOW_ETH_ALEN);
     e_send_info->last_send_time_us = 0;
     e_send_info->epkt.header = espnow_header_create(type, packet_size, flags);
 
@@ -352,7 +353,7 @@ static void serial_send_log(const char* format, ...)
 
 static void process_espnow_packet_acknowledge(const ESPNow_Send_Info* e_send_info)
 {
-    EPacket* epkt = &e_recv_info->epkt;
+    const EPacket* epkt = &e_send_info->epkt;
     
     switch (epkt->header.type) {
         
@@ -370,7 +371,7 @@ static void process_espnow_packet_acknowledge(const ESPNow_Send_Info* e_send_inf
         if (!s_send_info) break;
 
         SPacket_C2M_Drone_Connected* spkt_connected = (SPacket_C2M_Drone_Connected*) &s_send_info->spkt;
-        memcpy(&spkt_connected->drone_name, s_drone_infos[drone_idx].drone_name, MAX_DRONE_NAME_LENGTH);
+        memcpy(spkt_connected->drone_name, s_drone_infos[drone_idx].drone_name, MAX_DRONE_NAME_LENGTH);
 
         serial_send_info_complete(s_send_info);       
         
@@ -387,7 +388,7 @@ static void process_espnow_packet_acknowledge(const ESPNow_Send_Info* e_send_inf
         s_drone_infos[drone_idx].connected = false;
 
         // Try to remove the drone to the espnow peer list
-        esp_err_t ret = esp_now_del_peer(&s_drone_infos[drone_idx].mac_addr);
+        esp_err_t ret = esp_now_del_peer(s_drone_infos[drone_idx].mac_addr);
         if (ret != ESP_OK) {
             DGL_LOG_DEBUG("process_espnow_packet_acknowledge: Failed to delete Drone from peer list, ESP_ERR: %s", esp_err_to_name(ret));
         }
@@ -396,7 +397,7 @@ static void process_espnow_packet_acknowledge(const ESPNow_Send_Info* e_send_inf
         if (!s_send_info) break;
 
         SPacket_C2M_Drone_Disconnected* spkt_disconnected = (SPacket_C2M_Drone_Disconnected*) &s_send_info->spkt;
-        memcpy(&spkt_disconnected->drone_name, s_drone_infos[drone_idx].drone_name, MAX_DRONE_NAME_LENGTH);
+        memcpy(spkt_disconnected->drone_name, s_drone_infos[drone_idx].drone_name, MAX_DRONE_NAME_LENGTH);
 
         serial_send_info_complete(s_send_info);
     } break;
@@ -408,7 +409,7 @@ static void process_espnow_packet_acknowledge(const ESPNow_Send_Info* e_send_inf
 
 static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_info)
 {
-    EPacket* epkt = &e_recv_info->epkt;
+    const EPacket* epkt = &e_recv_info->epkt;
 
     // If we need to send an ack, we should do that before sending any other espnow packets
     if (epkt->header.flags & EPKT_FLAG_REQUIRE_ACK)
@@ -416,8 +417,11 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_inf
         int drone_idx = get_drone_idx_from_mac_addr(e_recv_info->mac_addr);
         if (drone_idx >= 0) {
             ESPNow_Send_Info* e_send_info = espnow_send_info_acquire(drone_idx, EPKT_C2D_ACK_RECEIVE, sizeof(EPacket_C2D_Ack_Receive), 0);
-            EPacket_C2D_Ack_Receive* epkt_c2d_ack = (EPacket_C2D_Ack_Receive*) e_send_info->epkt;
-            epkt_c2d_ack->acknowledged_packet_id = epkt->header.packet_id;
+            if (e_send_info) {
+                EPacket_C2D_Ack_Receive* epkt_c2d_ack = (EPacket_C2D_Ack_Receive*) &e_send_info->epkt;
+                epkt_c2d_ack->acknowledged_packet_id = epkt->header.packet_id;
+                espnow_send_info_complete(e_send_info);
+            }
         }
     }
 
@@ -434,7 +438,7 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_inf
             if (first_empty_idx < 0 && !s_drone_infos[i].occupied) {
                 first_empty_idx = i;
             }
-            if (memcmp(&s_drone_infos[i].mac_addr, e_recv_info->mac_addr, ESP_NOW_ETH_ALEN) == 0) {
+            if (memcmp(s_drone_infos[i].mac_addr, e_recv_info->mac_addr, ESP_NOW_ETH_ALEN) == 0) {
                 drone_already_indexed = true;
                 break;
             }
@@ -457,8 +461,8 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_inf
 
             // Finally index the new drone
             s_drone_infos[first_empty_idx].occupied = true;
-            memcpy(&s_drone_infos[first_empty_idx].mac_addr, e_recv_info->mac_addr, ESP_NOW_ETH_ALEN);
-            memcpy(&s_drone_infos[first_empty_idx].drone_name, epkt_advertise->drone_name, MAX_DRONE_NAME_LENGTH);
+            memcpy(s_drone_infos[first_empty_idx].mac_addr, e_recv_info->mac_addr, ESP_NOW_ETH_ALEN);
+            memcpy(s_drone_infos[first_empty_idx].drone_name, epkt_advertise->drone_name, MAX_DRONE_NAME_LENGTH);
             s_drone_infos[first_empty_idx].connected = false;
         }
         
@@ -501,7 +505,7 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_inf
 
         SPacket_C2M_Drone_Imu_Data* spkt_c2m_imu_data = (SPacket_C2M_Drone_Imu_Data*) &s_send_info->spkt;
         memcpy(&spkt_c2m_imu_data->imu_data, &epkt_d2c_imu_data->imu_data, sizeof(Payload_Imu_Data));
-        memcpy(&spkt_c2m_imu_data->drone_name, s_drone_infos[drone_idx].drone_name, MAX_DRONE_NAME_LENGTH);
+        memcpy(spkt_c2m_imu_data->drone_name, s_drone_infos[drone_idx].drone_name, MAX_DRONE_NAME_LENGTH);
 
         serial_send_info_complete(s_send_info);
         
@@ -559,7 +563,7 @@ static void process_incoming_serial_packet(const SPacket* spkt)
         
         // Try to add the drone to the espnow peer list
         esp_now_peer_info_t peer = {0};
-        memcpy(&peer.peer_addr, s_drone_infos[drone_idx].mac_addr, ESP_NOW_ETH_ALEN);
+        memcpy(peer.peer_addr, s_drone_infos[drone_idx].mac_addr, ESP_NOW_ETH_ALEN);
         peer.channel = 0;
         peer.ifidx = ESPNOW_WIFI_IF;
             
@@ -570,9 +574,9 @@ static void process_incoming_serial_packet(const SPacket* spkt)
         }
 
         ESPNow_Send_Info* e_send_info = espnow_send_info_acquire(drone_idx, EPKT_C2D_CONNECT, sizeof(EPacket_C2D_Connect), EPKT_FLAG_REQUIRE_ACK);
-        if (!e_send_info) break;
-            
-        espnow_send_info_complete(e_send_info);
+        if (e_send_info) {
+            espnow_send_info_complete(e_send_info);
+        }
         
     } break;
     
@@ -590,9 +594,9 @@ static void process_incoming_serial_packet(const SPacket* spkt)
         }
         
         ESPNow_Send_Info* e_send_info = espnow_send_info_acquire(drone_idx, EPKT_C2D_DISCONNECT, sizeof(EPacket_C2D_Disconnect), EPKT_FLAG_REQUIRE_ACK);
-        if (!e_send_info) break;
-            
-        espnow_send_info_complete(e_send_info);
+        if (e_send_info) {
+            espnow_send_info_complete(e_send_info);
+        }
         
     } break;
     
@@ -604,12 +608,11 @@ static void process_incoming_serial_packet(const SPacket* spkt)
         if (drone_idx < 0) break;
 
         ESPNow_Send_Info* e_send_info = espnow_send_info_acquire(drone_idx, EPKT_C2D_CONTROLL_COMMANDS, sizeof(EPacket_C2D_Controll_Commands), 0);
-        if (!e_send_info) break;
-        
-        EPacket_C2D_Controll_Commands* epkt_c2d_ctrl_cmds = (EPacket_C2D_Controll_Commands*) &e_send_info->epkt;
-        memcpy(&epkt_c2d_ctrl_cmds->ctrl_cmds, &spkt_m2c_ctrl_cmds->ctrl_cmds, sizeof(Payload_Controll_Commands));
-
-        espnow_send_info_complete(e_send_info);
+        if (e_send_info) {
+            EPacket_C2D_Controll_Commands* epkt_c2d_ctrl_cmds = (EPacket_C2D_Controll_Commands*) &e_send_info->epkt;
+            memcpy(&epkt_c2d_ctrl_cmds->ctrl_cmds, &spkt_m2c_ctrl_cmds->ctrl_cmds, sizeof(Payload_Controll_Commands));
+            espnow_send_info_complete(e_send_info);
+        }
         
     } break;
     

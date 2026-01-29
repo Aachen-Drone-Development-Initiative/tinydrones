@@ -29,7 +29,7 @@ Motor4 ist Pin 4
 #define LEDC_TEST_CH_NUM        (4)
 
 
-static struct motor
+struct motor
 {   
     int motor_id;
     ledc_channel_config_t channel_config;
