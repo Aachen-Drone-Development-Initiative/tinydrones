@@ -1,3 +1,4 @@
+
 #include <stddef.h>
 
 #include "freertos/FreeRTOS.h" 
@@ -23,12 +24,16 @@ typedef struct {
 static_array *initArray(size_t element_count, size_t element_size);
 
 /**
- * dealloccates all memory reserved by the array
+ * @brief dealloccates all memory reserved by the array
+ *
+ * This blocks until the semaphore on the array is released.
+ * BE CAREFUL TO NOT ACCESS THIS ARRAY AFTERWARDS
  */
 void destroy_array(static_array *array);
 
 /**
- * directly accesses array element 
+ * directly accesses array element
+ * Blocks until semaphore is availiable
  *
  * @param array pointer to array
  * @param index index
@@ -39,9 +44,21 @@ void *getElement(static_array *array, size_t index);
 
 /**
  * copies array element into buffer
+ * Blocks until semaphore is availiable
  * 
  * @param array pointer to static array
  * @param index index
  * @param buf buffer to copy into
  */
 void copyElement(static_array *array, size_t index, void *buf);
+
+/**
+ * copies buf into array at given index
+ * Blocks until semaphore is availiable
+ * Make sure buf is the same size as the array elements
+ *
+ * @param array pointer to static array
+ * @param index index
+ * @param buf buffer to copy from
+ */
+void writeElement(static_array *array, size_t index, void *buf);
