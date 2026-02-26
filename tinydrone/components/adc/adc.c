@@ -5,16 +5,27 @@
 #include "esp_adc/adc_oneshot.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+
 #include "soc/adc_channel.h"
 
-#define ADC_CHANNEL ADC_BITWIDTH_12
+#include <stdbool.h>
 
-#define BATTERY_MIN 3.1f
-#define BATTERY_GUARD 1
+#define ADC_CHANNEL ADC1_GPIO35_CHANNEL
+
+#define BATTERY_GUARD 1 //if battery voltage should be checked
+#define BATTERY_MIN 3.1f //minimum voltage (in V)
+#define CONTROL_GAP 5000 //time between the task checking the battery again (in ms)
 
 adc_oneshot_unit_handle_t adc_handle;
+bool is_init;
 
 void adc_init() {
+    if (is_init) {
+        adc_oneshot_del_unit(adc_handle);
+    }
+
+    is_init = true;
+
     adc_oneshot_unit_init_cfg_t unit_init_config = {
         .unit_id = ADC_UNIT_1,
     };
@@ -38,9 +49,8 @@ float get_voltage() {
 
 void battery_check_task() {
     while (BATTERY_GUARD) {
+        vTaskDelay(pdMS_TO_TICKS(CONTROL_GAP));
         if (get_voltage() <= BATTERY_MIN)
             shutdown();
-        
-        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

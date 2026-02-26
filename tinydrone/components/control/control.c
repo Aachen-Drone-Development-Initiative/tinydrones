@@ -18,6 +18,7 @@
 // static float s_f3; // f3: thrust rotor 3
 // static float s_f4; // f4: thrust rotor 4
 
+static portMUX_TYPE spinlock = portMUX_INITIALIZER_UNLOCKED;
 
 Motor_Values control_inputs_to_motor_values(Control_Inputs inputs)
 { // Using the linear equations given in the header to compute rotor forces
@@ -67,6 +68,8 @@ float pid_control_roll(float roll, float desired_roll, float kp, float ki, float
 
 void shutdown() {
     //shut all motors off
+    taskENTER_CRITICAL(&spinlock);
+
     set_motor(1, 0);
     set_motor(2, 0);
     set_motor(3, 0);
