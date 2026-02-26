@@ -1,4 +1,6 @@
-#pragma once
+#ifndef MOTOR_DRIVER_H_
+#define MOTOR_DRIVER_H_
+
 #include "esp_err.h"
 
 // TODO: Implement this
@@ -7,3 +9,5 @@
 // TODO fill this with nice functions
 extern esp_err_t init_motor_driver();
 extern esp_err_t set_motor(int motor_id, float value);
+
+#endif

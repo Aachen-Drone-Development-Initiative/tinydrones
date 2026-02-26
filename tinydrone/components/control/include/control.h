@@ -21,5 +21,6 @@ float pid_control_pitch(float pitch, float desired_pitch, float kp, float ki,
                         float kd);
 float pid_control_roll(float roll, float desired_roll, float kp, float ki,
                        float kd);
+void shutdown();
 
 #endif

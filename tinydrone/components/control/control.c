@@ -1,5 +1,10 @@
 #include "control.h"
+
+#include "motor_driver.h"
 #include <math.h>
+
+#include "freertos/FreeRTOS.h"
+#include "esp_sleep.h"
 
 // Control inputs
 // static float s_u1; // u1: thrust up
@@ -59,3 +64,18 @@ float pid_control_roll(float roll, float desired_roll, float kp, float ki, float
     previous_error = error;
     return output;
 }
+
+void shutdown() {
+    //shut all motors off
+    set_motor(1, 0);
+    set_motor(2, 0);
+    set_motor(3, 0);
+    set_motor(4, 0);
+
+    //disables everything on esp32 except causes for wakeup (no causes exist)
+    esp_deep_sleep_start();
+
+    return;
+}
+
+

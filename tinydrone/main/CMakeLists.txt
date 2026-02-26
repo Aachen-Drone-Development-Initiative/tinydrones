@@ -7,6 +7,7 @@ idf_component_register(SRCS "main.c"
   PRIV_REQUIRES motor_driver
   PRIV_REQUIRES navigation
   PRIV_REQUIRES control
+  PRIV_REQUIRES adc
 
   ## esp-idf components
   PRIV_REQUIRES esp_driver_usb_serial_jtag
