@@ -37,8 +37,8 @@ static_array_handle *static_array_init_array(size_t element_count, size_t elemen
   return arr_ptr;
 }
 
-void static_array_destroy_array(static_array_handle *array) {
-  if (xSemaphoreTake(array->semaphore, portMAX_DELAY) == pdFALSE) {
+void static_array_destroy_array(static_array_handle *array, TickType_t ticksToWait) {
+  if (xSemaphoreTake(array->semaphore, ticksToWait) == pdFALSE) {
     TINY_ABORT("Static Array deletion failed (couldnt take semaphore)");
   } 
 
@@ -48,8 +48,8 @@ void static_array_destroy_array(static_array_handle *array) {
 }
 
 
-void *static_array_get_element(static_array_handle *array, size_t index) {
-  if (xSemaphoreTake(array->semaphore, portMAX_DELAY) == pdFALSE) {
+void *static_array_get_element(static_array_handle *array, size_t index, TickType_t ticksToWait) {
+  if (xSemaphoreTake(array->semaphore, ticksToWait) == pdFALSE) {
     TINY_ABORT("Static Array access failed (couldnt take semaphore)");
   } 
   
@@ -60,8 +60,8 @@ void *static_array_get_element(static_array_handle *array, size_t index) {
   return element;
 }
 
-void static_array_copy_element(static_array_handle *array, size_t index, void *buf) {
-  if (xSemaphoreTake(array->semaphore, portMAX_DELAY) == pdFALSE) {
+void static_array_copy_element(static_array_handle *array, size_t index, void *buf, TickType_t ticksToWait) {
+  if (xSemaphoreTake(array->semaphore, ticksToWait) == pdFALSE) {
     TINY_ABORT("Static Array access failed (couldnt take semaphore)");
   } 
   
@@ -72,8 +72,8 @@ void static_array_copy_element(static_array_handle *array, size_t index, void *b
   return;
 }
 
-void static_array_write_element(static_array_handle *array, size_t index, void *buf) {
-  if (xSemaphoreTake(array->semaphore, portMAX_DELAY) == pdFALSE) {
+void static_array_write_element(static_array_handle *array, size_t index, void *buf, TickType_t ticksToWait) {
+  if (xSemaphoreTake(array->semaphore, ticksToWait) == pdFALSE) {
     TINY_ABORT("Static Array access failed (couldnt take semaphore)");
   } 
   
