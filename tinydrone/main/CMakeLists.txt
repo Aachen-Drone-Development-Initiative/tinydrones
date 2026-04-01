@@ -1,9 +1,9 @@
 idf_component_register(SRCS "main.c"
   INCLUDE_DIRS "."
+  INCLUDE_DIRS "../components/logging"
   
   # our components
   PRIV_REQUIRES espnow_messaging
-  PRIV_REQUIRES logging
   PRIV_REQUIRES motor_driver
   PRIV_REQUIRES mpu6050
 
@@ -18,6 +18,3 @@ idf_component_register(SRCS "main.c"
   PRIV_REQUIRES esp_netif
   PRIV_REQUIRES esp_wifi
 )
-
-# Set all configs here, DONT USE 'idf.py menueconfig'
-# set(CONFIG_USE_WARP 1) # this is just an example

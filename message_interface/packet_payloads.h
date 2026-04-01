@@ -1,6 +1,6 @@
 #pragma once
 
-#include "packet_config.h"
+#include "messaging_config.h"
 
 #include <stdint.h>
 

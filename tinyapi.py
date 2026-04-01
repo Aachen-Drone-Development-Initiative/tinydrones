@@ -1,4 +1,4 @@
-import serial, time
+import serial, time, sys
 from message_interface.serial_packets import *
 
 serialport = None
@@ -86,7 +86,7 @@ def expect_specific_packet(pkt_type: int, timeout_s: float):
         
     return packet
 
-            
+
 def write_packet(data: bytes):
     bytes_written = serialport.write(data)
     serialport.flush()
@@ -96,24 +96,15 @@ def write_packet(data: bytes):
 
 def list_drones():
     read_all_packets() # exhaust the serialport receive buffer
-    # write_packet(pack_m2c_get_drone_infos())
-    # packet = expect_specific_packet(SPKT_C2M_DRONE_INFOS, 3)
-    # # First we just get the drone info to know which drones are connected,
-    # # then we ping all of them so that the dongle knows if they are still responding or not.
-    # # The dongle could in theory do this on its own, but its much easier to do it like this.
-    # for drone_info in packet.drone_infos:
-    #     if drone_info.flags & DRONE_INFO_FLAG_IS_CONNETED:
-    #         write_packet(pack_m2c_ping_drone(drone_info.drone_name))
-    #         _ = expect_specific_packet(SPKT_C2M_PING_DRONE_RESULT, 3)
-
     write_packet(pack_m2c_get_drone_infos())
     packet = expect_specific_packet(SPKT_C2M_DRONE_INFOS, 3)
     for drone_info in packet.drone_infos:
         is_connected  = drone_info.flags & DRONE_INFO_FLAG_IS_CONNETED
         is_responding = drone_info.flags & DRONE_INFO_FLAG_IS_RESPONDING
-        print(f"{drone_info.drone_name} -- "
-              f"{'🟢 connected' if is_connected else '🔴 disconnected'}, "
-              f"{'⚡ responding' if is_responding else '❌ not responding'}")
+        fstr = f"{drone_info.drone_name} -- {'🟢 connected' if is_connected else '🔴 disconnected'}"
+        if is_connected:
+            fstr += f", {'⚡ responding' if is_responding else '❌ not responding'}"
+        print(fstr)
 
 
 def connect(drone_name: str):
@@ -123,7 +114,7 @@ def connect(drone_name: str):
     if packet.update == DRONE_CONN_UPDATE_SUCCESSFULLY_CONNECTED:
         print(f"Connected to drone '{packet.drone_name}'")
     elif packet.update == DRONE_CONN_UPDATE_FAILED_TO_CONNECT:
-        print(f"Failed to connect to drone '{packet.drone_name}'")
+        print(f"Failed to connect to drone '{drone_name}'")
     else:
         raise CorruptPacketError(f"Unexpected update '{packet.update}'")
 
@@ -135,7 +126,7 @@ def disconnect(drone_name: str):
     if packet.update == DRONE_CONN_UPDATE_SUCCESSFULLY_DISCONNECTED:
         print(f"Disconnected from drone '{packet.drone_name}'")
     elif packet.update == DRONE_CONN_UPDATE_FAILED_TO_DISCONNECT:
-        print(f"Failed to disconnect from drone '{packet.drone_name}'")
+        print(f"Failed to disconnect from drone '{drone_name}'")
     else:
         raise CorruptPacketError(f"Unexpected update '{packet.update}'")
 
@@ -159,7 +150,30 @@ def ping(drone_name: str):
         print(f"Drone '{packet.drone_name}' responded")
     else:
         print(f"Drone '{packet.drone_name}' did not respond")
-    
+
+
+def range_test(drone_name: str):
+    try:
+        while True:
+            write_packet(pack_m2c_ping_drone(drone_name))
+            responded = False
+            try:
+                packet = expect_specific_packet(SPKT_C2M_PING_DRONE_RESULT, 1)
+                responded = packet.drone_responded
+            except TimeoutError:
+                responded = False
+            sys.stdout.write("\r\033[K")
+            sys.stdout.write(f"{'responded :-)' if responded else 'no response :-('}")
+            sys.stdout.flush()
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        print("stop")
+        return
+
+
+def restart(drone_name: str):
+    write_packet(pack_m2c_restart_drone(drone_name))
+
 
 def monitor():
     try:
@@ -175,5 +189,3 @@ def monitor():
     except KeyboardInterrupt:
         print("exit")
         return
-
-

@@ -24,7 +24,10 @@ static void tinydrone_task(void*)
     {
         LOG_DEBUG("main loop");
 
-        Payload_Controll_Commands ctrl_cmds = espnow_get_latest_controll_commands();
+        LOG_ERROR("controller online=%s", espnow_controller_online() ? "true" : "false");
+
+        Payload_Controll_Commands ctrl_cmds;
+        espnow_get_latest_controll_commands(&ctrl_cmds);
         espnow_send_msg_to_controller("ctrl_cmds: %d, %d, %d, %d, %u",
                                       ctrl_cmds.pitch,
                                       ctrl_cmds.yaw,

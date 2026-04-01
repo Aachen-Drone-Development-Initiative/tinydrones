@@ -9,7 +9,7 @@
 #include "esp_wifi.h"
 #include "esp_now.h"
 #include "esp_random.h"
-#include "sys/time.h"
+#include "esp_timer.h"
 #include <stdatomic.h>
 
 // Buffer sizes (the packets life in these buffers, so they should be rather big)
@@ -17,8 +17,9 @@
 #define ESPNOW_SEND_INFO_RINGBUF_SIZE    (1024 * 10)
 
 // Packet acknowledging
-#define MAX_ESPNOW_PACKETS_WAITING_FOR_ACK    10
-#define ESPNOW_WAIT_FOR_ACK_RESEND_TIMEOUT_MS 100
+#define MAX_ESPNOW_PACKETS_WAITING_FOR_ACK 10
+const int espnow_wait_for_ack_resend_timeouts_ms[] = {10, 20, 40, 80, 160, 320, 640};
+#define ESPNOW_WAIT_FOR_ACK_RESEND_TIMEOUTS_MS_LEN (sizeof(espnow_wait_for_ack_resend_timeouts_ms) / sizeof(int))
 
 // Max latency on blocking ops
 #define ESPNOW_RECEIVE_INFO_RINGBUF_MAX_TICKS_TO_WAIT      pdMS_TO_TICKS(10)
@@ -44,9 +45,10 @@ typedef struct {
 } ESPNow_Receive_Info;
 
 typedef struct {
-    bool    occupied;
+    bool occupied;
     uint8_t mac_addr[ESP_NOW_ETH_ALEN];
     int64_t last_send_time_us;
+    int resend_count;
     EPacket epkt;
 } ESPNow_Send_Info;
 
@@ -56,6 +58,8 @@ typedef struct
 {
     bool in_peer_list;
     atomic_bool connected;
+    int64_t time_since_last_c2d_packet_us;
+    atomic_bool offline; // if time since last ping is not withing MAX_C2D_PING_INTERVAL_MS
     uint8_t mac_addr[ESP_NOW_ETH_ALEN];
     
     // Latest controll commands
@@ -87,6 +91,16 @@ static bool get_controller_connected()
 static void set_controller_connected(bool connected)
 {
     atomic_store(&s_controller.connected, connected);
+}
+
+static bool get_controller_offline()
+{
+    return atomic_load(&s_controller.offline);
+}
+
+static void set_controller_offline(bool offline)
+{
+    atomic_store(&s_controller.offline, offline);
 }
 
 static Payload_Controll_Commands get_control_commands()
@@ -196,16 +210,24 @@ static void espnow_send_info_complete(const ESPNow_Send_Info* e_send_info)
 
 static void process_espnow_packet_acknowledge(const ESPNow_Send_Info* e_send_info)
 {
-    return; // Currently we dont need to do anything special for any packet after receiving their ack.
+    return; // Currently there are no D2C packets that require ack
+}
+
+static void process_espnow_packet_failed_acknowledge(const ESPNow_Send_Info* e_send_info)
+{
+    return; // Currently there are no D2C packets that require ack
 }
 
 static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_info)
 {
     const EPacket* epkt = &e_recv_info->epkt;
 
-    LOG_DEBUG("processing incommig packet");
-
     bool from_controller = (memcmp(e_recv_info->mac_addr, s_controller.mac_addr, ESP_NOW_ETH_ALEN) == 0);
+
+    // Update 'time_since_last_c2d_packet_us'
+    if (from_controller) {
+        s_controller.time_since_last_c2d_packet_us = esp_timer_get_time();
+    }
 
     if (!from_controller && epkt->header.type != EPKT_C2D_CONNECT) {
         CONTR_LOG_ERROR("process_incoming_espnow_packet: Received packet of type '%d' from unknow sender, which is not allowed.", epkt->header.type);
@@ -249,7 +271,6 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_inf
     // but before sending any other packets (as soon after receiving as possible)
     if (epkt->header.flags & EPKT_FLAG_REQUIRE_ACK)
     {
-        LOG_DEBUG("sending an ack");
         ESPNow_Send_Info* e_send_info = espnow_send_info_acquire(s_controller.mac_addr, EPKT_D2C_ACK_RECEIVE, sizeof(EPacket_D2C_Ack_Receive), 0);
         if (e_send_info) {
             EPacket_D2C_Ack_Receive* epkt_d2c_ack = (EPacket_D2C_Ack_Receive*) &e_send_info->epkt;
@@ -301,7 +322,11 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_inf
     } break;
 
     case EPKT_C2D_PING:
-        break; // Nothing to do except sending an ack
+        break; // Do nothing except sending an ack
+
+    case EPKT_C2D_RESTART: {
+        esp_restart();
+    } break;
         
     default:
         CONTR_LOG_DEBUG("Received ESP-Now Packet with unexpected type: '%d'", epkt->header.type);
@@ -312,12 +337,9 @@ static void send_all_queued_espnow_packets()
 {
     while (1)
     {
-        /* LOG_DEBUG("try sending esp now packet") */
         size_t e_send_info_size;
         ESPNow_Send_Info* e_send_info = (ESPNow_Send_Info*) xRingbufferReceive(s_espnow_send_info_ringbuf, &e_send_info_size, pdMS_TO_TICKS(0));
         if (!e_send_info) break;
-
-        LOG_DEBUG("sending esp now packet")
 
         EPacket* epkt = &e_send_info->epkt;
 
@@ -325,9 +347,8 @@ static void send_all_queued_espnow_packets()
         if (ret == ESP_OK)
         {
             // Record the time this packet was sent
-            struct timeval tv_now;
-            gettimeofday(&tv_now, NULL);
-            e_send_info->last_send_time_us = (int64_t)tv_now.tv_sec * 1000000L + (int64_t)tv_now.tv_usec;
+            int64_t time_us = esp_timer_get_time();
+            e_send_info->last_send_time_us = time_us;
 
             if (epkt->header.flags & EPKT_FLAG_REQUIRE_ACK)
             {
@@ -364,15 +385,19 @@ static void send_all_queued_espnow_packets()
             continue;
         }
 
-        struct timeval tv_now;
-        gettimeofday(&tv_now, NULL);
-        int64_t time_us = (int64_t)tv_now.tv_sec * 1000000L + (int64_t)tv_now.tv_usec;
+        int64_t time_us = esp_timer_get_time();
 
-        if (time_us - e_send_info->last_send_time_us > ESPNOW_WAIT_FOR_ACK_RESEND_TIMEOUT_MS * 1000L)
+        if (e_send_info->resend_count >= ESPNOW_WAIT_FOR_ACK_RESEND_TIMEOUTS_MS_LEN)
+        {
+            process_espnow_packet_failed_acknowledge(e_send_info);
+            memset(e_send_info, 0, MAX_ESPNOW_SEND_INFO_SIZE);
+        }
+        else if (time_us - e_send_info->last_send_time_us > espnow_wait_for_ack_resend_timeouts_ms[e_send_info->resend_count] * 1000)
         {
             esp_err_t ret = esp_now_send(e_send_info->mac_addr, (uint8_t*) &e_send_info->epkt, espnow_packet_size(e_send_info->epkt.header));
             if (ret == ESP_OK) {
                 e_send_info->last_send_time_us = time_us;
+                e_send_info->resend_count += 1;
             }
             else {
                 LOG_DEBUG("send_all_queued_espnow_packets: esp_now_send failed: %s", esp_err_to_name(ret));
@@ -398,7 +423,7 @@ static void send_advertisement()
 // Main task
 static void espnow_messaging_task(void*)
 {
-    int64_t time_of_last_advertise_ms = 0;
+    int64_t time_since_last_advertise_us = 0;
     
     while (1)
     {
@@ -409,16 +434,17 @@ static void espnow_messaging_task(void*)
             vRingbufferReturnItem(s_espnow_receive_info_ringbuf, e_recv_info);
         }
 
-        // Send advertisement to the broadcast address (reaches everyone nearby)
-        // once in a while, when we are not connected to any controller.
-        if (!get_controller_connected())
-        {
-            struct timeval tv_now;
-            gettimeofday(&tv_now, NULL);
-            int64_t time_ms = ((int64_t)tv_now.tv_sec * 1000000L + (int64_t)tv_now.tv_usec) / 1000;
-            
-            if (time_ms - time_of_last_advertise_ms >= ADVERTISE_COOLDOWN_MS) {
-                time_of_last_advertise_ms = time_ms;
+        int64_t time_us = esp_timer_get_time();
+
+        if (get_controller_connected()) {
+            bool offline = time_us - s_controller.time_since_last_c2d_packet_us > MIN_C2D_SEND_INTERVAL_MS * 1000;
+            set_controller_offline(offline);
+        }
+        else {
+            // Send advertisement to the broadcast address (reaches everyone nearby)
+            // once in a while, when we are not connected to any controller.
+            if (time_us - time_since_last_advertise_us > ADVERTISE_COOLDOWN_MS * 1000) {
+                time_since_last_advertise_us = time_us;
                 send_advertisement();
             }
         }
@@ -498,9 +524,19 @@ void espnow_block_until_controller_connected()
     }
 }
 
-Payload_Controll_Commands espnow_get_latest_controll_commands()
+void espnow_get_latest_controll_commands(Payload_Controll_Commands* out)
 {
-    return get_control_commands();
+    *out = get_control_commands();
+}
+
+bool espnow_controller_connected()
+{
+    return get_controller_connected();
+}
+
+bool espnow_controller_online()
+{
+    return !get_controller_offline();
 }
 
 EHeader espnow_header_create(EPacket_Type type, size_t packet_size, EPacket_Flags flags)
@@ -515,27 +551,25 @@ EHeader espnow_header_create(EPacket_Type type, size_t packet_size, EPacket_Flag
     };
 }
 
-bool espnow_send_packet_to_controller(EPacket* epkt)
+Espnow_Messaging_Ret espnow_send_packet_to_controller(EPacket* epkt)
 {
-    if (!get_controller_connected()) {
-        return false;
-    }
+    if (!get_controller_connected()) return ESPNOW_MSG_ERR_CONTROLLER_DISCONNECTED;
+    if (get_controller_offline())    return ESPNOW_MSG_ERR_CONTROLLER_OFFLINE;
 
     size_t epkt_size = espnow_packet_size(epkt->header);
     ESPNow_Send_Info* e_send_info = espnow_send_info_acquire_raw(s_controller.mac_addr, epkt_size);
     if (e_send_info) {
         memcpy(&e_send_info->epkt, epkt, epkt_size);
         espnow_send_info_complete(e_send_info);
-        return true;
+        return ESPNOW_MSG_ERR_ESP_NOW_SEND_FAIL;
     }
-    return false;
+    return ESPNOW_MSG_OK;
 }
 
-bool espnow_send_msg_to_controller(const char* format, ...)
+Espnow_Messaging_Ret espnow_send_msg_to_controller(const char* format, ...)
 {
-    if (!get_controller_connected()) {
-        return false;
-    }
+    if (!get_controller_connected()) return ESPNOW_MSG_ERR_CONTROLLER_DISCONNECTED;
+    if (get_controller_offline())    return ESPNOW_MSG_ERR_CONTROLLER_OFFLINE;
     
     // Importantly we don't log any errors that might occur in this function!
     va_list args;
@@ -555,7 +589,7 @@ bool espnow_send_msg_to_controller(const char* format, ...)
     esp_err_t ret = esp_now_send(s_controller.mac_addr, (uint8_t*) epkt_log, packet_size);
     if (ret != ESP_OK) {
         LOG_ERROR("espnow_send_msg_to_controller: Failed to send espnow packet, ESP_ERR: %s", esp_err_to_name(ret));
-        return false;
+        return ESPNOW_MSG_ERR_ESP_NOW_SEND_FAIL;
     }
-    return true;
+    return ESPNOW_MSG_OK;
 }

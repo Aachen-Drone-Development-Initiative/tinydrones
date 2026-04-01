@@ -11,7 +11,7 @@
 #include "esp_mac.h"
 #include "esp_now.h"
 #include "esp_random.h"
-#include "sys/time.h"
+#include "esp_timer.h"
 
 #include "driver/usb_serial_jtag.h"
 
@@ -27,12 +27,12 @@
 
 // Packet acknowledging
 #define MAX_ESPNOW_PACKETS_WAITING_FOR_ACK 10
-const int espnow_wait_for_ack_resend_timeouts_ms[] = {2, 4, 6, 8, 16, 32, 64, 128, 256, 512};
+const int espnow_wait_for_ack_resend_timeouts_ms[] = {20, 40, 80, 160, 320, 640};
 #define ESPNOW_WAIT_FOR_ACK_RESEND_TIMEOUTS_MS_LEN (sizeof(espnow_wait_for_ack_resend_timeouts_ms) / sizeof(int))
 
 // Max Latency on blocking ops
-#define USB_SERIAL_WRITE_MAX_TICKS_TO_WAIT            pdMS_TO_TICKS(10)
-#define USB_SERIAL_WRITE_LOG_MAX_TICKS_TO_WAIT        pdMS_TO_TICKS(1000) // logs are important
+#define USB_SERIAL_WRITE_MAX_TICKS_TO_WAIT            pdMS_TO_TICKS(10) 
+#define USB_SERIAL_WRITE_LOG_MAX_TICKS_TO_WAIT        pdMS_TO_TICKS(0) // dont stall because of logs
 #define USB_SERIAL_READ_MAX_TICKS_TO_WAIT             pdMS_TO_TICKS(10)
 #define ESPNOW_RECEIVE_INFO_RINGBUF_MAX_TICKS_TO_WAIT pdMS_TO_TICKS(10)
 #define ESPNOW_SEND_INFO_RINGBUF_MAX_TICKS_TO_WAIT    pdMS_TO_TICKS(10)
@@ -41,6 +41,10 @@ const int espnow_wait_for_ack_resend_timeouts_ms[] = {2, 4, 6, 8, 16, 32, 64, 12
 // ESP-Now Settings
 #define ESPNOW_WIFI_MODE WIFI_MODE_AP // The dongle should be the Access Point that the drones connect to
 #define ESPNOW_WIFI_IF   ESP_IF_WIFI_AP // We want to use the Access Point interface (IF)
+
+// How often we should ping the drone. We are required to send a message
+// within 'MIN_C2D_SEND_INTERVAL_MS', else the drone will think we are offline.
+#define PING_CONNECTED_DRONE_INTERVAL_MS (MIN_C2D_SEND_INTERVAL_MS / 4)
 
 static void serial_send_msg_to_master(const char* format, ...);
 
@@ -87,6 +91,7 @@ typedef struct {
     char drone_name[MAX_DRONE_NAME_LENGTH];
     bool connected;
     bool responding;
+    int64_t last_ping_time_us;
 } Drone_Info;
 
 static Drone_Info s_drone_infos[MAX_DRONES] = {0};
@@ -224,7 +229,7 @@ static int get_drone_idx_from_mac_addr(const uint8_t* mac_addr)
         }
     }
     
-    LOG_DEBUG("No drone available with MAC: '"MACSTR"'.", MAC2STR(mac_addr));
+    LOG_ERROR("No drone available with MAC: '"MACSTR"'.", MAC2STR(mac_addr));
     return -1;
 }
 
@@ -236,7 +241,7 @@ static int get_drone_idx_from_drone_name(const char* drone_name)
         }
     }
     
-    LOG_DEBUG("No drone available with name: '%.*s'.", MAX_DRONE_NAME_LENGTH, drone_name);
+    LOG_ERROR("No drone available with name: '%.*s'.", MAX_DRONE_NAME_LENGTH, drone_name);
     return -1;
 }
 
@@ -405,8 +410,13 @@ static void process_espnow_packet_acknowledge(const ESPNow_Send_Info* e_send_inf
         
     } break;
 
-    case EPKT_C2D_PING: {
-        send_c2m_ping_drone_result(drone_idx, true);
+    case EPKT_C2D_PING:
+    {
+        const EPacket_C2D_Ping* epkt_ping = (EPacket_C2D_Ping*) epkt;
+        if (epkt_ping->notify_master) {
+            send_c2m_ping_drone_result(drone_idx, true);
+        }
+        
     } break;
         
     default:
@@ -463,8 +473,6 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_inf
     case EPKT_D2C_ADVERTISE:
     {
         EPacket_D2C_Advertise* epkt_advertise = (EPacket_D2C_Advertise*) epkt;
-
-        /* LOG_DEBUG("received ad"); */
 
         // check if the drone is already indexed, and if not find the first empty index
         int first_empty_idx = -1;
@@ -542,7 +550,7 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_inf
     {
         EPacket_D2C_Ack_Receive* epkt_d2c_ack_recv = (EPacket_D2C_Ack_Receive*) epkt;
         EPacket_ID acknowledged_packet_id = epkt_d2c_ack_recv->acknowledged_packet_id;
-        
+
         int drone_idx = get_drone_idx_from_mac_addr(e_recv_info->mac_addr);
         if (drone_idx < 0) break;
         
@@ -652,7 +660,10 @@ static void process_incoming_serial_packet(const SPacket* spkt)
         SPacket_M2C_Connect_To_Drone* spkt_m2c_connect = (SPacket_M2C_Connect_To_Drone*) spkt;
         
         int drone_idx = get_drone_idx_from_drone_name(spkt_m2c_connect->drone_name);
-        if (drone_idx < 0) break;
+        if (drone_idx < 0) {
+            send_c2m_drone_connection_update(drone_idx, DRONE_CONN_UPDATE_FAILED_TO_CONNECT);
+            break;
+        }
 
         if (s_drone_infos[drone_idx].connected) {
             LOG_DEBUG("Can't 'connect' to drone, because its already connected.");
@@ -770,6 +781,27 @@ static void process_incoming_serial_packet(const SPacket* spkt)
 
         ESPNow_Send_Info* e_send_info = espnow_send_info_acquire(drone_idx, EPKT_C2D_PING, sizeof(EPacket_C2D_Ping), EPKT_FLAG_REQUIRE_ACK);
         if (e_send_info) {
+            EPacket_C2D_Ping* epkt_ping = (EPacket_C2D_Ping*) &e_send_info->epkt;
+            epkt_ping->notify_master = true;
+            espnow_send_info_complete(e_send_info);
+        }
+        
+    } break;
+
+    case SPKT_M2C_RESTART_DRONE:
+    {
+        SPacket_M2C_Restart_Drone* spkt_m2c_restart = (SPacket_M2C_Restart_Drone*) spkt;
+        
+        int drone_idx = get_drone_idx_from_drone_name(spkt_m2c_restart->drone_name);
+        if (drone_idx < 0) break;
+        
+        if (!s_drone_infos[drone_idx].connected) {
+            LOG_ERROR("Can't restart drone because the drone is not connected.");
+            break; 
+        }
+
+        ESPNow_Send_Info* e_send_info = espnow_send_info_acquire(drone_idx, EPKT_C2D_RESTART, sizeof(EPacket_C2D_Restart), EPKT_FLAG_REQUIRE_ACK);
+        if (e_send_info) {
             espnow_send_info_complete(e_send_info);
         }
         
@@ -777,6 +809,26 @@ static void process_incoming_serial_packet(const SPacket* spkt)
     
     default:
         LOG_DEBUG("Received Serial Packet with unexpected or unknown type: '%u'", spkt->header.type);
+    }
+}
+
+static void ping_connected_drones()
+{
+    int64_t time_us = esp_timer_get_time();
+
+    for (int drone_idx = 0; drone_idx < MAX_DRONES; ++drone_idx) {
+        if (s_drone_infos[drone_idx].connected) {
+            if (time_us - s_drone_infos[drone_idx].last_ping_time_us > PING_CONNECTED_DRONE_INTERVAL_MS * 1000)
+            {
+                ESPNow_Send_Info* e_send_info = espnow_send_info_acquire(drone_idx, EPKT_C2D_PING, sizeof(EPacket_C2D_Ping), EPKT_FLAG_REQUIRE_ACK);
+                if (e_send_info) {
+                    EPacket_C2D_Ping* epkt_ping = (EPacket_C2D_Ping*) &e_send_info->epkt;
+                    epkt_ping->notify_master = false;
+                    espnow_send_info_complete(e_send_info);
+                }
+                s_drone_infos[drone_idx].last_ping_time_us = time_us;
+            }
+        }
     }
 }
 
@@ -794,9 +846,7 @@ static void send_all_queued_espnow_packets()
         if (ret == ESP_OK)
         {
             // Record the time this packet was sent
-            struct timeval tv_now;
-            gettimeofday(&tv_now, NULL);
-            e_send_info->last_send_time_us = (int64_t)tv_now.tv_sec * 1000000L + (int64_t)tv_now.tv_usec;
+            e_send_info->last_send_time_us = esp_timer_get_time();
 
             if (epkt->header.flags & EPKT_FLAG_REQUIRE_ACK)
             {
@@ -833,9 +883,7 @@ static void send_all_queued_espnow_packets()
             continue;
         }
         
-        struct timeval tv_now;
-        gettimeofday(&tv_now, NULL);
-        int64_t time_us = (int64_t)tv_now.tv_sec * 1000000L + (int64_t)tv_now.tv_usec;
+        int64_t time_us = esp_timer_get_time();
 
         if (e_send_info->resend_count >= ESPNOW_WAIT_FOR_ACK_RESEND_TIMEOUTS_MS_LEN)
         {
@@ -893,6 +941,7 @@ int app_main(void)
         size_t e_recv_info_size;
         ESPNow_Receive_Info* e_recv_info = xRingbufferReceive(s_espnow_receive_info_ringbuf, &e_recv_info_size, pdMS_TO_TICKS(0));
         if (e_recv_info) {
+            // TODO: check that e_recv_info_size matches the packet size
             process_incoming_espnow_packet(e_recv_info);
             vRingbufferReturnItem(s_espnow_receive_info_ringbuf, e_recv_info);
         }
@@ -904,6 +953,8 @@ int app_main(void)
                 memset(&s_serial_packet_receive_buffer, 0, SPKT_MAX_SIZE);
             }
         }
+
+        ping_connected_drones();
         
         send_all_queued_espnow_packets();
 
@@ -912,7 +963,7 @@ int app_main(void)
         }
 
         // TODO: this delay is necessary because we need to yield for other tasks
-        // and also give some time to lower priority tasks. Actually we should block
+        // and also give some time to lower priority tasks. We should actually block
         // on a queue in this task instead, but we cant because we have two queues, that we would
         // have to block on, so they should probably be unified or the task should be split.
         vTaskDelay(1);

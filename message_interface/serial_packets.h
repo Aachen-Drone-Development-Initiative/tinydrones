@@ -1,6 +1,6 @@
 #pragma once
 
-#include "packet_config.h"
+#include "messaging_config.h"
 #include "packet_payloads.h"
 
 #include <stdint.h>
@@ -15,6 +15,7 @@ enum {
     SPKT_M2C_CONTROLL_COMMANDS = 66,      // Master sends controll commands for a specific Drone to the Controller
     SPKT_M2C_GET_DRONE_INFOS = 67,        // Master requests basic infos about all available Drones, such as their names
     SPKT_M2C_PING_DRONE = 68,             // Master requests a Ping-Pong response test for a specific Drone
+    SPKT_M2C_RESTART_DRONE = 69,          // Master requests to restart a specific Drone
 
     SPKT_C2M_DRONE_CONNECTION_UPDATE = 96, // Controller notifies the Master about a successful connection to the Drone
     SPKT_C2M_DRONE_INFOS = 97,             // Controller sends the requested basic infos about available Drones to the Master
@@ -74,6 +75,11 @@ typedef struct {
     SHeader header;             // type == SPKT_M2C_PING_DRONE
     char drone_name[MAX_DRONE_NAME_LENGTH];
 } PACKED SPacket_M2C_Ping_Drone;
+
+typedef struct {
+    SHeader header;             // type == SPKT_M2C_RESTART_DRONE
+    char drone_name[MAX_DRONE_NAME_LENGTH];
+} PACKED SPacket_M2C_Restart_Drone;
 
 
 // C2M - Controller to Master Packets

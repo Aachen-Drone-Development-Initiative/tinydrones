@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "packet_config.h"
+#include "messaging_config.h"
 #include "packet_payloads.h"
 
 #include "esp_now.h"
@@ -26,6 +26,7 @@ enum {
     EPKT_C2D_CONTROLL_COMMANDS = 34,  // Controller sends controll commands to the Drone
     EPKT_C2D_ACK_RECEIVE = 35,        // Controller acknowledges that a specific packet was received
     EPKT_C2D_PING = 36,               // Controller expects an ACK_RECEIVE from the drone
+    EPKT_C2D_RESTART = 37,            // Controller asks Drone to restart
 };
 typedef uint8_t EPacket_Type;
 
@@ -106,7 +107,12 @@ typedef struct {
 
 typedef struct {
     EHeader header;             // type == EPKT_C2D_PING, flags = EPKT_FLAG_REQUIRE_ACK
+    uint8_t notify_master;      // notifies master about ping success/fail if set to 1
 } PACKED EPacket_C2D_Ping;
+
+typedef struct {
+    EHeader header;             // type == EPKT_C2D_RESTART
+} PACKED EPacket_C2D_Restart;
 
 
 #undef PACKED

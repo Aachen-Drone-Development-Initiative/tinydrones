@@ -12,6 +12,7 @@ SPKT_M2C_DISCONNECT_FROM_DRONE = 65
 SPKT_M2C_CONTROLL_COMMANDS = 66
 SPKT_M2C_GET_DRONE_INFOS = 67
 SPKT_M2C_PING_DRONE = 68
+SPKT_M2C_RESTART_DRONE = 69
 
 SPKT_C2M_DRONE_CONNECTION_UPDATE = 96
 SPKT_C2M_DRONE_INFOS = 97
@@ -67,6 +68,13 @@ def pack_m2c_get_drone_infos() -> bytes:
 def pack_m2c_ping_drone(drone_name: str) -> bytes:
     payload_format = '<' + str(MAX_DRONE_NAME_LENGTH) + 's'
     header = pack_header(SPKT_M2C_PING_DRONE, struct.calcsize(payload_format))
+    payload = struct.pack(payload_format, drone_name.encode('ascii'))
+    return header + payload
+
+
+def pack_m2c_restart_drone(drone_name: str) -> bytes:
+    payload_format = '<' + str(MAX_DRONE_NAME_LENGTH) + 's'
+    header = pack_header(SPKT_M2C_RESTART_DRONE, struct.calcsize(payload_format))
     payload = struct.pack(payload_format, drone_name.encode('ascii'))
     return header + payload
 
