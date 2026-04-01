@@ -6,12 +6,16 @@
 
 #define PACKED __attribute__((packed))
 
+enum {
+    CTRL_CMD_FLAG_IS_ARMED = 1 << 0,
+};
+
 typedef struct {
     int16_t pitch;
     int16_t yaw;
     int16_t roll;
     int16_t throttle;
-    uint8_t is_armed : 1;
+    uint8_t flags;
 } PACKED Payload_Controll_Commands;
 
 typedef struct {
@@ -26,8 +30,13 @@ typedef struct {
     // ...
 } PACKED Payload_Telemetry;
 
+enum {
+    DRONE_INFO_FLAG_IS_CONNETED      = 1 << 0,
+    DRONE_INFO_FLAG_IS_RESPONDING    = 1 << 1,
+};
+
 typedef struct {
-    uint8_t connected : 1;
+    uint8_t flags;
     char drone_name[MAX_DRONE_NAME_LENGTH];
 } PACKED Payload_Drone_Info;
 

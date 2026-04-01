@@ -1,164 +1,194 @@
-import ctypes
+import struct, logging
+from types import SimpleNamespace
 
-# Packet Types
+MAX_DRONE_NAME_LENGTH = 12
+SPKT_MAX_SIZE = 1024 * 4
 
-PKT_INVALID = 0
 
-# M2C - Master to Controller
-PKT_M2C_CONNECT_TO_DRONE = 1
-PKT_M2C_DISCONNECT_FROM_DRONE = 2
-PKT_M2C_CONTROLL_COMMANDS = 3
-PKT_M2C_GET_DETECTED_DRONES = 4
+SPKT_INVALID = 0
 
-# C2M - Controller to Master
-PKT_C2M_DRONE_CONNECTED = 5
-PKT_C2M_DRONE_DISCONNECTED = 6
-PKT_C2M_DETECTED_DRONES = 7
-PKT_C2M_IMU_DATA = 8
-PKT_C2M_LOG_MSG = 9
+SPKT_M2C_CONNECT_TO_DRONE = 64
+SPKT_M2C_DISCONNECT_FROM_DRONE = 65
+SPKT_M2C_CONTROLL_COMMANDS = 66
+SPKT_M2C_GET_DRONE_INFOS = 67
+SPKT_M2C_PING_DRONE = 68
 
-Packet_Type = ctypes.c_uint8
+SPKT_C2M_DRONE_CONNECTION_UPDATE = 96
+SPKT_C2M_DRONE_INFOS = 97
+SPKT_C2M_DRONE_IMU_DATA = 98
+SPKT_C2M_DRONE_TELEMETRY = 99
+SPKT_C2M_LOG = 100
+SPKT_C2M_PING_DRONE_RESULT = 101
 
-# Packet layout definitions
 
-class Packet(ctypes.LittleEndianStructure):
-    _pack_ = 1
-    def _eval_dynamic_part(self, bytes_buffer):
-        logging.error("This packet is not dynamically sized, yet the payload size exceeds the size of the packet.")
-        return None
+SERIAL_DELIMITER = (0xB62A429F).to_bytes(4, byteorder='little')
 
-class Packet_M2C(Packet):
-    pass
+SPACKET_TYPE_FORMAT     = 'B' # uint8_t
+SERIAL_DELIMITER_FORMAT = 'I' # uint32_t
 
-class Packet_C2M(Packet):
-    pass
+HEADER_FORMAT = '<' + SERIAL_DELIMITER_FORMAT + SPACKET_TYPE_FORMAT + 'h'
+HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
 
-class Payload(ctypes.LittleEndianStructure):
-    _pack_ = 1
-
-class Packet_Header(ctypes.LittleEndianStructure):
-    _pack_ = 1
-    _fields_ = [("type", Packet_Type),
-                ("payload_size", ctypes.c_int16)]
-    # The payload follows right after these fields in memory
-    # In C you would write 'uint8_t payload[0];' as last member of the struct
 
 # M2C - Master to Controller
-    
-# type == PKT_M2C_CONNECT_TO_DRONE
-class Packet_M2C_Connect_To_Drone(Packet_M2C):
-    _fields_ = [("header", Packet_Header),
-                ("esp_idx", Esp_Idx)]
 
-# type == PKT_M2C_DISCONNECT_FROM_DRONE
-class Packet_M2C_Disconnect_From_Drone(Packet_M2C):
-    _fields_ = [("header", Packet_Header),
-                ("esp_idx", Esp_Idx)]
 
-CTRL_STATE_DRONE_ARMED = (1 << 0)
+def pack_header(pkt_type: int, payload_size: int) -> bytes:
+    return struct.pack(HEADER_FORMAT, int.from_bytes(SERIAL_DELIMITER, byteorder='little'), pkt_type, payload_size)
 
-Controll_State_Flags = ctypes.c_uint16
 
-class Payload_Controll_Commands(Payload):
-    _fields_ = [("ctrl_state_flags", Controll_State_Flags),
-                ("pitch",    ctypes.c_int16),
-                ("yaw",      ctypes.c_int16),
-                ("roll",     ctypes.c_int16),
-                ("throttle", ctypes.c_int16)]
+def pack_m2c_connect_to_drone(drone_name: str) -> bytes:
+    payload_format = '<' + str(MAX_DRONE_NAME_LENGTH) + 's'
+    header = pack_header(SPKT_M2C_CONNECT_TO_DRONE, struct.calcsize(payload_format))
+    payload = struct.pack(payload_format, drone_name.encode('ascii'))
+    return header + payload
 
-# type == PKT_M2C_CONTROLL_COMMANDS
-class Packet_M2C_Controll_Commands(Packet_M2C):
-    _fields_ = [("header", Packet_Header),
-                ("ctrl_cmds", Payload_Controll_Commands),
-                ("esp_idx", Esp_Idx)]
 
-# type == PKT_M2C_GET_DETECTED_DRONES
-class Packet_M2C_Get_Detected_Drones(Packet_M2C):
-    _fields_ = [("header", Packet_Header)]
+def pack_m2c_disconnect_from_drone(drone_name: str) -> bytes:
+    payload_format = '<' + str(MAX_DRONE_NAME_LENGTH) + 's'
+    header = pack_header(SPKT_M2C_DISCONNECT_FROM_DRONE, struct.calcsize(payload_format))
+    payload = struct.pack(payload_format, drone_name.encode('ascii'))
+    return header + payload
+
+
+CTRL_CMD_FLAG_IS_ARMED = 1 << 0
+
+def pack_m2c_control_commands(drone_name: str, pitch: int, yaw: int, roll: int, throttle: int, flags: int) -> bytes:
+    payload_format = '<hhhhB' + str(MAX_DRONE_NAME_LENGTH) + 's'
+    header = pack_header(SPKT_M2C_CONTROLL_COMMANDS, struct.calcsize(payload_format))
+    payload = struct.pack(payload_format, pitch, yaw, roll, throttle, flags, drone_name.encode('ascii'))
+    return header + payload
+
+
+def pack_m2c_get_drone_infos() -> bytes:
+    return pack_header(SPKT_M2C_GET_DRONE_INFOS, 0)
+
+
+def pack_m2c_ping_drone(drone_name: str) -> bytes:
+    payload_format = '<' + str(MAX_DRONE_NAME_LENGTH) + 's'
+    header = pack_header(SPKT_M2C_PING_DRONE, struct.calcsize(payload_format))
+    payload = struct.pack(payload_format, drone_name.encode('ascii'))
+    return header + payload
+
 
 # C2M - Controller to Master
 
-# type == PKT_C2M_DRONE_CONNECTED
-class Packet_C2M_Drone_Connected(Packet_C2M):
-    _fields_ = [("header", Packet_Header),
-                ("esp_idx", Esp_Idx)]
 
-# type == PKT_C2M_DRONE_DISCONNECTED
-class Packet_C2M_Drone_Disconnected(Packet_C2M):
-    _fields_ = [("header", Packet_Header),
-                ("esp_idx", Esp_Idx)]
+DRONE_CONN_UPDATE_SUCCESSFULLY_CONNECTED      = 0
+DRONE_CONN_UPDATE_FAILED_TO_CONNECT           = 1
+DRONE_CONN_UPDATE_SUCCESSFULLY_DISCONNECTED   = 2
+DRONE_CONN_UPDATE_FAILED_TO_DISCONNECT        = 3
 
-class Payload_Detected_Drone(Payload):
-    _fields_ = [("esp_idx", Esp_Idx),
-                ("drone_name", ctypes.c_char * MAX_DRONE_NAME_LENGTH)]
+def unpack_c2m_drone_connection_update(data: bytes) -> SimpleNamespace:
+    payload_format = '<B' + str(MAX_DRONE_NAME_LENGTH) + 's'
+    update, drone_name = struct.unpack(payload_format, data[HEADER_SIZE:])
+    return SimpleNamespace(
+        pkt_type   = SPKT_C2M_DRONE_CONNECTION_UPDATE,
+        update     = update,
+        drone_name = drone_name.decode("ascii").rstrip('\0')
+    )
 
-# type == PKT_C2M_DETECTED_DRONES
-class Packet_C2M_Detected_Drones(Packet_C2M):
-    _fields_ = [("header", Packet_Header),
-                ("detected_drones_length", ctypes.c_int)]
+
+def unpack_c2m_drone_imu_data(data: bytes) -> SimpleNamespace:
+    payload_format = '<qffffff' + str(MAX_DRONE_NAME_LENGTH) + 's'
+    time_us, omega_x, omega_y, omega_z, acc_x, acc_y, acc_z, drone_name = struct.unpack(
+        payload_format, data[HEADER_SIZE:])
+    drone_name = drone_name.decode('ascii').rstrip('\0')
+    return SimpleNamespace(
+        pkt_type = SPKT_C2M_DRONE_IMU_DATA,
+        time_us = time_us,
+        omega_x = omega_x,
+        omega_y = omega_y,
+        omega_z = omega_z,
+        acc_x = acc_x,
+        acc_y = acc_y,
+        acc_z = acc_z,
+        drone_name = drone_name
+    )
+
+
+def unpack_c2m_drone_telemetry(data: bytes) -> SimpleNamespace:
+    payload_format = '<qf' + str(MAX_DRONE_NAME_LENGTH) + 's'
+    time_us, battery_voltage, drone_name = struct.unpack(
+        payload_format, data[HEADER_SIZE:])
+    return SimpleNamespace(
+        pkt_type        = SPKT_C2M_DRONE_TELEMETRY,
+        time_us         = time_us,
+        battery_voltage = battery_voltage,
+        drone_name      = drone_name.decode('ascii').rstrip('\0')
+    )
+
+
+DRONE_INFO_FLAG_IS_CONNETED      = 1 << 0
+DRONE_INFO_FLAG_IS_RESPONDING    = 1 << 1
+
+def unpack_c2m_drone_infos(data: bytes) -> SimpleNamespace:
+    drone_infos_count_format = '<h'
+    drone_infos_count_size = struct.calcsize(drone_infos_count_format)
+    (drone_infos_count,) = struct.unpack(drone_infos_count_format,
+        data[HEADER_SIZE:HEADER_SIZE + drone_infos_count_size])
+
+    drone_info_format = '<B' + str(MAX_DRONE_NAME_LENGTH) + 's'
+    drone_info_size = struct.calcsize(drone_info_format)
+    drone_infos = []
+    offset = HEADER_SIZE + drone_infos_count_size
+    for _ in range(drone_infos_count):
+        flags, drone_name = struct.unpack(drone_info_format,
+                                          data[offset : offset + drone_info_size])
+        drone_infos.append(SimpleNamespace(
+            flags      = flags,
+            drone_name = drone_name.decode('ascii').rstrip('\0')
+        ))
+        offset += drone_info_size
     
-    # The indices of the detected drones follow right after the packet
-    # In C you would write 'Esp_Idx detected_drones[0];' as last member of the struct
+    return SimpleNamespace(
+        pkt_type    = SPKT_C2M_DRONE_INFOS,
+        drone_infos = drone_infos
+    )
 
-    def _eval_dynamic_part(self, bytes_buffer):
-        detected_drones_size = self.detected_drones_length * ctypes.sizeof(Payload_Detected_Drone)
-        if detected_drones_size != len(bytes_buffer):
-            logging.error("Size mismatch for PKT_C2M_DETECTED_DRONES")
-            return None
-        detected_drones = (Payload_Detected_Drone * self.detected_drones_length).from_buffer(bytes_buffer)
-        self.detected_drones = list(detected_drones) # attach a list of indices
 
-class Payload_Imu_Data(Payload):
-    _fields_ = [("time_us", ctypes.c_int64),
-                ("omega_x", ctypes.c_float),
-                ("omega_y", ctypes.c_float),
-                ("omega_z", ctypes.c_float),
-                ("acc_x", ctypes.c_float),
-                ("acc_y", ctypes.c_float),
-                ("acc_z", ctypes.c_float)]
+def unpack_c2m_log(data: bytes) -> SimpleNamespace:
+    _, _, payload_size = struct.unpack(HEADER_FORMAT, data[:HEADER_SIZE])
+    return SimpleNamespace(
+        pkt_type = SPKT_C2M_LOG,
+        msg      = data[HEADER_SIZE : HEADER_SIZE + payload_size].decode('ascii')
+    )
 
-# type == PKT_C2M_IMU_DATA
-class Packet_C2M_Imu_Data(Packet_C2M):
-    _fields_ = [("header", Packet_Header),
-                ("imu_data", Payload_Imu_Data),
-                ("esp_idx", Esp_Idx)]
 
-LOG_MSG_NONE = 0
-LOG_MSG_DBG_INFO = 1
-LOG_MSG_ERROR = 2
+def unpack_c2m_ping_drone_result(data: bytes) -> SimpleNamespace:
+    payload_format = '<B' + str(MAX_DRONE_NAME_LENGTH) + 's'
+    drone_responded, drone_name = struct.unpack(payload_format, data[HEADER_SIZE:])
+    return SimpleNamespace(
+        pkt_type        = SPKT_C2M_PING_DRONE_RESULT,
+        drone_responded = drone_responded,
+        drone_name      = drone_name.decode("ascii").rstrip('\0')
+    )
 
-Log_Msg_Type = ctypes.c_uint8
 
-class Payload_Log(Payload):
-    _fields_ = [("type", Log_Msg_Type),
-                ("msg_length", ctypes.c_int)]
+def unpack_header(data: bytes) -> SimpleNamespace:
+    delim, pkt_type, payload_size = struct.unpack(HEADER_FORMAT, data[:HEADER_SIZE])
+    return SimpleNamespace(
+        delim        = delim,
+        pkt_type     = pkt_type,
+        payload_size = payload_size
+    )
 
-# type == PKT_C2M_LOG_MSG
-class Packet_C2M_Log_Msg(Packet_C2M):
-    _fields_ = [("header", Packet_Header),
-                ("esp_idx", Esp_Idx),
-                ("log", Payload_Log)]
+class CorruptPacketError(Exception):
+    pass
 
-    # The bytes of the msg follow right after the packet
-    # In C you would write 'char msg[0];' as last member of the struct
-
-    def _eval_dynamic_part(self, bytes_buffer):
-        if self.msg_length != len(bytes_buffer):
-            logging.error("Size mismatch for PKT_C2M_LOG_MSG")
-            return None
-        msg = (ctypes.c_char * self.msg_length).from_buffer(bytes_buffer)
-        self.msg = msg.raw.decode("ascii")
-
-map_packet_type_to_packet = {
-    # M2C - Master to Controller
-    PKT_M2C_CONNECT_TO_DRONE: Packet_M2C_Connect_To_Drone,
-    PKT_M2C_DISCONNECT_FROM_DRONE: Packet_M2C_Disconnect_From_Drone,
-    PKT_M2C_CONTROLL_COMMANDS: Packet_M2C_Controll_Commands,
-    PKT_M2C_GET_DETECTED_DRONES: Packet_M2C_Get_Detected_Drones,
-    PKT_C2M_DRONE_CONNECTED: Packet_C2M_Drone_Connected,
-    # C2M - Controller to Master
-    PKT_C2M_DRONE_DISCONNECTED: Packet_C2M_Drone_Disconnected,
-    PKT_C2M_DETECTED_DRONES: Packet_C2M_Detected_Drones,
-    PKT_C2M_IMU_DATA: Packet_C2M_Imu_Data,
-    PKT_C2M_LOG_MSG: Packet_C2M_Log_Msg,
-}
+def unpack_any(data: bytes) -> SimpleNamespace:
+    handlers = {
+        SPKT_C2M_DRONE_CONNECTION_UPDATE:    unpack_c2m_drone_connection_update,
+        SPKT_C2M_DRONE_INFOS:                unpack_c2m_drone_infos,
+        SPKT_C2M_DRONE_IMU_DATA:             unpack_c2m_drone_imu_data,
+        SPKT_C2M_DRONE_TELEMETRY:            unpack_c2m_drone_telemetry,
+        SPKT_C2M_LOG:                        unpack_c2m_log,
+        SPKT_C2M_PING_DRONE_RESULT:          unpack_c2m_ping_drone_result,
+    }
+    _, pkt_type, _ = struct.unpack(HEADER_FORMAT, data[:HEADER_SIZE])
+    handler = handlers.get(pkt_type)
+    
+    if not handler:
+        raise CorruptPacketError(f"No unpack function exists for the packet type '{pkt_type}', it may be corrupted")
+    
+    return handler(data)

@@ -17,56 +17,50 @@
 
 // Static Array sizes
 #define MAX_DRONES 128
-#define MAX_LOG_MSG_LENGTH 1024
 
 // Buffer sizes (the packets life in these buffers, so they should be rather big)
 #define ESPNOW_RECEIVE_INFO_RINGBUF_SIZE (1024 * 10)
-#define ESPNOW_SEND_INFO_RINGBUF_SIZE (1024 * 10)
-#define SERIAL_SEND_INFO_RINGBUF_SIZE (1024 * 10)
-#define USB_SERIAL_JTAG_IN_BUFFER_SIZE (1024 * 10)
-#define USB_SERIAL_JTAG_OUT_BUFFER_SIZE (1024 * 10)
+#define ESPNOW_SEND_INFO_RINGBUF_SIZE    (1024 * 10)
+#define SERIAL_SEND_INFO_RINGBUF_SIZE    (1024 * 10)
+#define USB_SERIAL_JTAG_IN_BUFFER_SIZE   (1024 * 10)
+#define USB_SERIAL_JTAG_OUT_BUFFER_SIZE  (1024 * 10)
 
-// Packet Acknowledge system
+// Packet acknowledging
 #define MAX_ESPNOW_PACKETS_WAITING_FOR_ACK 10
-#define ESPNOW_WAIT_FOR_ACK_RESEND_TIMEOUT_MS 100
+const int espnow_wait_for_ack_resend_timeouts_ms[] = {2, 4, 6, 8, 16, 32, 64, 128, 256, 512};
+#define ESPNOW_WAIT_FOR_ACK_RESEND_TIMEOUTS_MS_LEN (sizeof(espnow_wait_for_ack_resend_timeouts_ms) / sizeof(int))
 
 // Max Latency on blocking ops
-#define USB_SERIAL_WRITE_MAX_TICKS_TO_WAIT pdMS_TO_TICKS(10)
-#define USB_SERIAL_WRITE_LOG_MAX_TICKS_TO_WAIT pdMS_TO_TICKS(1000) // logs are important
-#define USB_SERIAL_READ_MAX_TICKS_TO_WAIT  pdMS_TO_TICKS(10)
+#define USB_SERIAL_WRITE_MAX_TICKS_TO_WAIT            pdMS_TO_TICKS(10)
+#define USB_SERIAL_WRITE_LOG_MAX_TICKS_TO_WAIT        pdMS_TO_TICKS(1000) // logs are important
+#define USB_SERIAL_READ_MAX_TICKS_TO_WAIT             pdMS_TO_TICKS(10)
 #define ESPNOW_RECEIVE_INFO_RINGBUF_MAX_TICKS_TO_WAIT pdMS_TO_TICKS(10)
-#define ESPNOW_SEND_INFO_RINGBUF_MAX_TICKS_TO_WAIT pdMS_TO_TICKS(10)
-#define SERIAL_SEND_INFO_RINGBUF_MAX_TICKS_TO_WAIT pdMS_TO_TICKS(10)
+#define ESPNOW_SEND_INFO_RINGBUF_MAX_TICKS_TO_WAIT    pdMS_TO_TICKS(10)
+#define SERIAL_SEND_INFO_RINGBUF_MAX_TICKS_TO_WAIT    pdMS_TO_TICKS(10)
 
 // ESP-Now Settings
 #define ESPNOW_WIFI_MODE WIFI_MODE_AP // The dongle should be the Access Point that the drones connect to
 #define ESPNOW_WIFI_IF   ESP_IF_WIFI_AP // We want to use the Access Point interface (IF)
 
-static void serial_send_log(const char* format, ...);
+static void serial_send_msg_to_master(const char* format, ...);
 
-#define DGL_LOG_ERROR(format, ...) serial_send_log("ERROR (DONGLE): " format "\n", ##__VA_ARGS__)
+#define LOG_ERROR(format, ...) serial_send_msg_to_master("ERROR (DONGLE): " format "\n", ##__VA_ARGS__)
 
 #define ENABLE_DEBUG_LOGS 1
 
 #if ENABLE_DEBUG_LOGS
-#    define DGL_LOG_DEBUG(format, ...) serial_send_log("DEBUG (DONGLE): " format "\n", ##__VA_ARGS__)
+#    define LOG_DEBUG(format, ...) serial_send_msg_to_master("DEBUG (DONGLE): " format "\n", ##__VA_ARGS__)
 #else
-#    define DGL_LOG_DEBUG(...)
+#    define LOG_DEBUG(...)
 #endif
 
-#define DGL_ASSERT(condition)                                           \
+#define ASSERT(condition)                                               \
     do {                                                                \
         if (!(condition)) {                                             \
-            DGL_LOG_ERROR("ASSERTION FAILED (DONGLE):%s:%d", __FILE__, __LINE__); \
-            abort();                                                    \
+            LOG_ERROR("ASSERT FAILED (DONGLE):%s:%d (%s)", __FILE__, __LINE__, #condition); \
+            abort();                                                     \
         }                                                               \
-    } while (0);
-
-#define DGL_ABORT(...)                          \
-    do {                                        \
-        DGL_LOG_ERROR(__VA_ARGS__);             \
-        abort();                                \
-    } while (0);
+    } while (0)
 
 typedef struct {
     uint8_t mac_addr[ESP_NOW_ETH_ALEN];
@@ -77,6 +71,7 @@ typedef struct {
     bool occupied;
     uint8_t mac_addr[ESP_NOW_ETH_ALEN];
     int64_t last_send_time_us;
+    int resend_count;
     EPacket epkt;
 } ESPNow_Send_Info;
 
@@ -91,6 +86,7 @@ typedef struct {
     uint8_t mac_addr[ESP_NOW_ETH_ALEN];
     char drone_name[MAX_DRONE_NAME_LENGTH];
     bool connected;
+    bool responding;
 } Drone_Info;
 
 static Drone_Info s_drone_infos[MAX_DRONES] = {0};
@@ -114,8 +110,7 @@ static void usb_serial_jtag_init()
     };
 
     if (usb_serial_jtag_driver_install(&usb_serial_jtag_config) != ESP_OK) {
-        // Not using DGL_ABORT, becasue that one requires usb-serial/JTAG to log the error, instead just try to printf
-        printf("ERROR: init_usb_serial_jtag: usb_serial_jtag_driver_install failed, aborting...");
+        printf("ERROR: init_usb_serial_jtag: usb_serial_jtag_driver_install failed, halting...");
         abort();
     }
 }
@@ -124,27 +119,26 @@ static void nvs_init()
 {
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        if (nvs_flash_erase() != ESP_OK) DGL_ABORT("init_nvs: nvs_flash_erase failed");
+        ASSERT(nvs_flash_erase() == ESP_OK);
         ret = nvs_flash_init();
     }
-    if(ret != ESP_OK) DGL_ABORT("init_nvs: nvs_flash_init failed, ESP_ERR: %s", esp_err_to_name(ret));
+    ASSERT(ret == ESP_OK);
 }
 
 static void wifi_init(bool long_range_mode)
 {
-    if (esp_netif_init() != ESP_OK)                DGL_ABORT("init_wifi: esp_netif_init failed");
-    if (esp_event_loop_create_default() != ESP_OK) DGL_ABORT("init_wifi: esp_event_loop_create_default failed");
+    ASSERT(esp_netif_init() == ESP_OK);
+    ASSERT(esp_event_loop_create_default() == ESP_OK);
     
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     
-    if (esp_wifi_init(&cfg) != ESP_OK)                 DGL_ABORT("init_wifi: esp_wifi_init failed");
-    if (esp_wifi_set_mode(ESPNOW_WIFI_MODE) != ESP_OK) DGL_ABORT("init_wifi: esp_wifi_set_mode failed");
-    if (esp_wifi_start() != ESP_OK)                    DGL_ABORT("init_wifi: esp_wifi_start failed");
+    ASSERT(esp_wifi_init(&cfg) == ESP_OK);
+    ASSERT(esp_wifi_set_mode(ESPNOW_WIFI_MODE) == ESP_OK);
+    ASSERT(esp_wifi_start() == ESP_OK);
 
     if (long_range_mode) {
-        if (esp_wifi_set_protocol(ESPNOW_WIFI_IF, WIFI_PROTOCOL_11B|WIFI_PROTOCOL_11G|WIFI_PROTOCOL_11N|WIFI_PROTOCOL_LR) != ESP_OK) {
-            DGL_ABORT("init_wifi: esp_wifi_set_protocol failed");
-        }
+        ASSERT(esp_wifi_set_protocol(ESPNOW_WIFI_IF, WIFI_PROTOCOL_11B|WIFI_PROTOCOL_11G|WIFI_PROTOCOL_11N|WIFI_PROTOCOL_LR)
+               == ESP_OK);
     }
 }
 
@@ -153,9 +147,9 @@ static void espnow_receive_callback(const esp_now_recv_info_t *recv_info, const 
 
 static void espnow_init()
 {
-    if (esp_now_init() != ESP_OK)                                    DGL_ABORT("init_espnow: esp_now_init failed");
-    if (esp_now_register_send_cb(espnow_send_callback) != ESP_OK)    DGL_ABORT("init_espnow: esp_now_register_send_cb failed");
-    if (esp_now_register_recv_cb(espnow_receive_callback) != ESP_OK) DGL_ABORT("init_espnow: esp_now_register_recv_cb failed");
+    ASSERT(esp_now_init() == ESP_OK);
+    ASSERT(esp_now_register_send_cb(espnow_send_callback) == ESP_OK);
+    ASSERT(esp_now_register_recv_cb(espnow_receive_callback) == ESP_OK);
     
     // Adding Boradcast peer to peer list.
     esp_now_peer_info_t peer = {0};
@@ -164,9 +158,7 @@ static void espnow_init()
     peer.channel = 0;
     peer.ifidx = ESPNOW_WIFI_IF;
     
-    if (esp_now_add_peer(&peer) != ESP_OK) {
-        DGL_ABORT("init_espnow: esp_now_add_peer failed");
-    }
+    ASSERT(esp_now_add_peer(&peer) == ESP_OK);
 }
 
 static void dongle_init()
@@ -180,7 +172,7 @@ static void dongle_init()
     s_espnow_send_info_ringbuf    = xRingbufferCreate(ESPNOW_SEND_INFO_RINGBUF_SIZE,    RINGBUF_TYPE_NOSPLIT);
     s_serial_send_info_ringbuf    = xRingbufferCreate(SERIAL_SEND_INFO_RINGBUF_SIZE,    RINGBUF_TYPE_NOSPLIT);
 
-    DGL_LOG_DEBUG("Dongle Initialized!");
+    LOG_DEBUG("Dongle Initialized!");
 }
 
 static void espnow_send_callback(const esp_now_send_info_t *tx_info, esp_now_send_status_t status)
@@ -190,14 +182,14 @@ static void espnow_send_callback(const esp_now_send_info_t *tx_info, esp_now_sen
        which packet 'tx_info' refers to (trust me its difficult). */
 
     if (status != ESP_NOW_SEND_SUCCESS) {
-        DGL_LOG_DEBUG("ESP-Now send callback reported that sending a packet failed.");
+        LOG_DEBUG("ESP-Now send callback reported that sending a packet failed.");
     }
 }
 
 static void espnow_receive_callback(const esp_now_recv_info_t *recv_info, const uint8_t *data, int length)
 {
     if (recv_info == NULL || recv_info->src_addr == NULL || data == NULL || length <= 0) {
-        DGL_LOG_ERROR("espnow_receive_callback: arg error");
+        LOG_ERROR("espnow_receive_callback: arg error");
         return;
     }
 
@@ -208,7 +200,7 @@ static void espnow_receive_callback(const esp_now_recv_info_t *recv_info, const 
                                              ESPNOW_RECEIVE_INFO_RINGBUF_MAX_TICKS_TO_WAIT);
 
     if (ret != pdTRUE) {
-        DGL_LOG_DEBUG("espnow_receive_callback: Creating espnow receive info in ringbuffer failed. The ringbuffer might be full.");
+        LOG_DEBUG("espnow_receive_callback: Creating espnow receive info in ringbuffer failed. The ringbuffer might be full.");
         return;
     }
 
@@ -216,11 +208,11 @@ static void espnow_receive_callback(const esp_now_recv_info_t *recv_info, const 
     memcpy(&e_recv_info->epkt, data, length);
     // We should probably just remove the packet from the ringbuffer if this fails, but not sure if it ever would
     // do that in case this assert ever triggers.
-    DGL_ASSERT(e_recv_info->epkt.header.payload_size == length - sizeof(EPacket));
+    ASSERT(e_recv_info->epkt.header.payload_size == length - sizeof(EPacket));
 
     ret = xRingbufferSendComplete(s_espnow_receive_info_ringbuf, (void*) e_recv_info);
     if (ret != pdTRUE) {
-        DGL_LOG_DEBUG("espnow_receive_callback: Completing espnow receive info in ringbuffer failed.");
+        LOG_DEBUG("espnow_receive_callback: Completing espnow receive info in ringbuffer failed.");
     }
 }
 
@@ -232,7 +224,7 @@ static int get_drone_idx_from_mac_addr(const uint8_t* mac_addr)
         }
     }
     
-    DGL_LOG_DEBUG("No esp indexed with MAC: '"MACSTR"'. Send PKT_D2C_ADVERTISE for your esp to be indexed.", MAC2STR(mac_addr));
+    LOG_DEBUG("No drone available with MAC: '"MACSTR"'.", MAC2STR(mac_addr));
     return -1;
 }
 
@@ -244,7 +236,7 @@ static int get_drone_idx_from_drone_name(const char* drone_name)
         }
     }
     
-    DGL_LOG_DEBUG("No esp indexed with name: '%.*s'. Send PKT_D2C_ADVERTISE for your esp to be indexed.", MAX_DRONE_NAME_LENGTH, drone_name);
+    LOG_DEBUG("No drone available with name: '%.*s'.", MAX_DRONE_NAME_LENGTH, drone_name);
     return -1;
 }
 
@@ -253,7 +245,7 @@ static size_t serial_packet_size(SHeader s_header) { return sizeof(SHeader) + s_
 
 static EHeader espnow_header_create(EPacket_Type type, size_t packet_size, EPacket_Flags flags)
 {
-    DGL_ASSERT(packet_size >= sizeof(EPacket));
+    ASSERT(packet_size >= sizeof(EPacket));
     
     return (EHeader) {
         .type = type,
@@ -265,7 +257,7 @@ static EHeader espnow_header_create(EPacket_Type type, size_t packet_size, EPack
 
 static SHeader serial_header_create(SPacket_Type type, size_t packet_size)
 {
-    DGL_ASSERT(packet_size >= sizeof(SPacket));
+    ASSERT(packet_size >= sizeof(SPacket));
     
     return (SHeader) {
         .delim = SERIAL_DELIMITER,
@@ -276,21 +268,23 @@ static SHeader serial_header_create(SPacket_Type type, size_t packet_size)
 
 static ESPNow_Send_Info* espnow_send_info_acquire(int dest_drone_idx, EPacket_Type type, size_t packet_size, EPacket_Flags flags)
 {
-    DGL_ASSERT(s_drone_infos[dest_drone_idx].occupied == true);
+    ASSERT(s_drone_infos[dest_drone_idx].occupied == true);
 
+    size_t e_send_info_size = sizeof(ESPNow_Send_Info) - sizeof(EPacket) + packet_size;
     ESPNow_Send_Info* e_send_info = NULL;
     UBaseType_t ret = xRingbufferSendAcquire(s_espnow_send_info_ringbuf,
                                              (void**) &e_send_info,
-                                             sizeof(ESPNow_Send_Info) - sizeof(EPacket) + packet_size,
+                                             e_send_info_size,
                                              SERIAL_SEND_INFO_RINGBUF_MAX_TICKS_TO_WAIT);
 
     if (ret != pdTRUE) {
-        DGL_LOG_DEBUG("espnow_send_info_acquire: Creating espnow send info in ringbuffer failed. The ringbuffer might be full.");
+        LOG_DEBUG("espnow_send_info_acquire: Creating espnow send info in ringbuffer failed. The ringbuffer might be full.");
         return NULL;
     }
-    
+
+    memset(e_send_info, 0, e_send_info_size);
+    e_send_info->occupied = true;
     memcpy(e_send_info->mac_addr, s_drone_infos[dest_drone_idx].mac_addr, ESP_NOW_ETH_ALEN);
-    e_send_info->last_send_time_us = 0;
     e_send_info->epkt.header = espnow_header_create(type, packet_size, flags);
 
     return e_send_info;
@@ -298,17 +292,19 @@ static ESPNow_Send_Info* espnow_send_info_acquire(int dest_drone_idx, EPacket_Ty
 
 static Serial_Send_Info* serial_send_info_acquire(SPacket_Type type, size_t packet_size)
 {
+    size_t s_send_info_size = packet_size;
     Serial_Send_Info* s_send_info = NULL;
     UBaseType_t ret = xRingbufferSendAcquire(s_serial_send_info_ringbuf,
                                              (void**) &s_send_info,
-                                             packet_size,
+                                             s_send_info_size,
                                              SERIAL_SEND_INFO_RINGBUF_MAX_TICKS_TO_WAIT);
 
     if (ret != pdTRUE) {
-        DGL_LOG_DEBUG("serial_send_info_acquire: Creating serial send info in ringbuffer failed. The ringbuffer might be full.");
+        LOG_DEBUG("serial_send_info_acquire: Creating serial send info in ringbuffer failed. The ringbuffer might be full.");
         return NULL;
     }
 
+    memset(s_send_info, 0, s_send_info_size);
     s_send_info->spkt.header = serial_header_create(type, packet_size);
 
     return s_send_info;
@@ -319,7 +315,7 @@ static void serial_send_info_complete(const Serial_Send_Info* s_send_info)
     UBaseType_t ret = xRingbufferSendComplete(s_serial_send_info_ringbuf, (void*) s_send_info);
     
     if (ret != pdTRUE) {
-        DGL_LOG_DEBUG("serial_send_info_complete: Completing serial send info in ringbuffer failed.");
+        LOG_DEBUG("serial_send_info_complete: Completing serial send info in ringbuffer failed.");
     }
 }
 
@@ -328,82 +324,119 @@ static void espnow_send_info_complete(const ESPNow_Send_Info* e_send_info)
     UBaseType_t ret = xRingbufferSendComplete(s_espnow_send_info_ringbuf, (void*) e_send_info);
     
     if (ret != pdTRUE) {
-        DGL_LOG_DEBUG("espnow_send_info_complete: Completing espnow send info in ringbuffer failed.");
+        LOG_DEBUG("espnow_send_info_complete: Completing espnow send info in ringbuffer failed.");
     }
 }
 
-static void serial_send_log(const char* format, ...)
+static void serial_send_msg_to_master(const char* format, ...)
 {
     va_list args;
 
-    // Allocate statically to reduce stress from calling this function in critical situations
+    // We dont use 'serial_send_info_acquire/complete', but instead allocate
+    // the required memory statically and send the packet immediately.
     static char pkt_buffer[sizeof(SPacket_C2M_Log) + MAX_LOG_MSG_LENGTH];
     SPacket_C2M_Log* spkt_log = (SPacket_C2M_Log*) &pkt_buffer;
 
     va_start(args, format);
-    int log_msg_len = vsnprintf(spkt_log->msg, MAX_LOG_MSG_LENGTH, format, args) + 1; // + 1 because '\0' is not counted
+    int log_msg_size = vsnprintf(spkt_log->msg, MAX_LOG_MSG_LENGTH, format, args) + 1; // + 1 because '\0' is not counted
     va_end(args);    
 
-    size_t packet_size = sizeof(SPacket_C2M_Log) + log_msg_len;
+    size_t packet_size = sizeof(SPacket_C2M_Log) + log_msg_size;
     spkt_log->header = serial_header_create(SPKT_C2M_LOG, packet_size);
     
     usb_serial_jtag_write_bytes(spkt_log, packet_size, USB_SERIAL_WRITE_LOG_MAX_TICKS_TO_WAIT);
     // Importantly we don't log any errors that might occur in this function!
 }
 
+static void send_c2m_drone_connection_update(int drone_idx, uint8_t update)
+{
+    Serial_Send_Info* s_send_info = serial_send_info_acquire(SPKT_C2M_DRONE_CONNECTION_UPDATE, sizeof(SPacket_C2M_Drone_Connection_Update));
+    if (!s_send_info) return;
+
+    SPacket_C2M_Drone_Connection_Update* spkt_conn_update = (SPacket_C2M_Drone_Connection_Update*) &s_send_info->spkt;
+    spkt_conn_update->update = update;
+    memcpy(spkt_conn_update->drone_name, s_drone_infos[drone_idx].drone_name, MAX_DRONE_NAME_LENGTH);
+
+    serial_send_info_complete(s_send_info);
+}
+
+static void send_c2m_ping_drone_result(int drone_idx, uint8_t drone_responded)
+{
+    Serial_Send_Info* s_send_info = serial_send_info_acquire(SPKT_C2M_PING_DRONE_RESULT, sizeof(SPacket_C2M_Ping_Drone_Result));
+    if (!s_send_info) return;
+
+    SPacket_C2M_Ping_Drone_Result* spkt_ping_res = (SPacket_C2M_Ping_Drone_Result*) &s_send_info->spkt;
+    spkt_ping_res->drone_responded = drone_responded;
+    memcpy(spkt_ping_res->drone_name, s_drone_infos[drone_idx].drone_name, MAX_DRONE_NAME_LENGTH);
+
+    serial_send_info_complete(s_send_info);
+}
+
 static void process_espnow_packet_acknowledge(const ESPNow_Send_Info* e_send_info)
 {
     const EPacket* epkt = &e_send_info->epkt;
-    
+
+    int drone_idx = get_drone_idx_from_mac_addr(e_send_info->mac_addr);
+    if (drone_idx < 0) return;
+        
     switch (epkt->header.type) {
         
     case EPKT_C2D_CONNECT:
     {
-        int drone_idx = get_drone_idx_from_mac_addr(e_send_info->mac_addr);
-        if (drone_idx < 0) break;
-
-        // Do nothing when we are already connected
         if (s_drone_infos[drone_idx].connected == true) break;
         
         s_drone_infos[drone_idx].connected = true;
-
-        Serial_Send_Info* s_send_info = serial_send_info_acquire(SPKT_C2M_DRONE_CONNECTED, sizeof(SPacket_C2M_Drone_Connected));
-        if (!s_send_info) break;
-
-        SPacket_C2M_Drone_Connected* spkt_connected = (SPacket_C2M_Drone_Connected*) &s_send_info->spkt;
-        memcpy(spkt_connected->drone_name, s_drone_infos[drone_idx].drone_name, MAX_DRONE_NAME_LENGTH);
-
-        serial_send_info_complete(s_send_info);       
+        send_c2m_drone_connection_update(drone_idx, DRONE_CONN_UPDATE_SUCCESSFULLY_CONNECTED);
         
     } break;
-        
+
     case EPKT_C2D_DISCONNECT:
     {
-        int drone_idx = get_drone_idx_from_mac_addr(e_send_info->mac_addr);
-        if (drone_idx < 0) break;
-
-        // Do nothing when we are already disconnected
         if (s_drone_infos[drone_idx].connected == false) break;
-
-        s_drone_infos[drone_idx].connected = false;
-
+        
         // Try to remove the drone to the espnow peer list
         esp_err_t ret = esp_now_del_peer(s_drone_infos[drone_idx].mac_addr);
         if (ret != ESP_OK) {
-            DGL_LOG_DEBUG("process_espnow_packet_acknowledge: Failed to delete Drone from peer list, ESP_ERR: %s", esp_err_to_name(ret));
+            LOG_DEBUG("process_espnow_packet_acknowledge: Failed to delete Drone from peer list, ESP_ERR: %s", esp_err_to_name(ret));
         }
 
-        Serial_Send_Info* s_send_info = serial_send_info_acquire(SPKT_C2M_DRONE_DISCONNECTED, sizeof(SPacket_C2M_Drone_Disconnected));
-        if (!s_send_info) break;
+        s_drone_infos[drone_idx].connected = false;
+        send_c2m_drone_connection_update(drone_idx, DRONE_CONN_UPDATE_SUCCESSFULLY_DISCONNECTED);
+        
+    } break;
 
-        SPacket_C2M_Drone_Disconnected* spkt_disconnected = (SPacket_C2M_Drone_Disconnected*) &s_send_info->spkt;
-        memcpy(spkt_disconnected->drone_name, s_drone_infos[drone_idx].drone_name, MAX_DRONE_NAME_LENGTH);
-
-        serial_send_info_complete(s_send_info);
+    case EPKT_C2D_PING: {
+        send_c2m_ping_drone_result(drone_idx, true);
     } break;
         
     default:
-        DGL_LOG_DEBUG("Received acknowledge for ESP-Now Packet of type '%d', for which we do not support ackowledges", epkt->header.type);
+        LOG_DEBUG("process_espnow_packet_acknowledge: Unexpected packet type '%u'", epkt->header.type);
+    }
+}
+
+static void process_espnow_packet_failed_acknowledge(const ESPNow_Send_Info* e_send_info)
+{
+    const EPacket* epkt = &e_send_info->epkt;
+
+    int drone_idx = get_drone_idx_from_mac_addr(e_send_info->mac_addr);
+    if (drone_idx < 0) return;
+
+    switch (epkt->header.type) {
+        
+    case EPKT_C2D_CONNECT: {
+        send_c2m_drone_connection_update(drone_idx, DRONE_CONN_UPDATE_FAILED_TO_CONNECT);
+    } break;
+    
+    case EPKT_C2D_DISCONNECT: {
+        send_c2m_drone_connection_update(drone_idx, DRONE_CONN_UPDATE_FAILED_TO_DISCONNECT);
+    } break;
+
+    case EPKT_C2D_PING: {
+        send_c2m_ping_drone_result(drone_idx, false);
+    } break;
+
+    default:
+        LOG_DEBUG("process_espnow_packet_failed_acknowledge: Unexpected packet type '%u'", epkt->header.type);
     }
 }
 
@@ -431,30 +464,67 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_inf
     {
         EPacket_D2C_Advertise* epkt_advertise = (EPacket_D2C_Advertise*) epkt;
 
+        /* LOG_DEBUG("received ad"); */
+
         // check if the drone is already indexed, and if not find the first empty index
         int first_empty_idx = -1;
         bool drone_already_indexed = false;
-        for (int i = 0; i < MAX_DRONES; ++i) {
-            if (first_empty_idx < 0 && !s_drone_infos[i].occupied) {
-                first_empty_idx = i;
+        bool unexpected_drone = false;
+        int drone_idx = 0;
+        for (; drone_idx < MAX_DRONES; ++drone_idx) {
+            if (first_empty_idx < 0 && !s_drone_infos[drone_idx].occupied) {
+                first_empty_idx = drone_idx;
             }
-            if (memcmp(s_drone_infos[i].mac_addr, e_recv_info->mac_addr, ESP_NOW_ETH_ALEN) == 0) {
+            
+            bool matching_mac_addr = false;
+            if (memcmp(s_drone_infos[drone_idx].mac_addr, e_recv_info->mac_addr, ESP_NOW_ETH_ALEN) == 0) {
+                matching_mac_addr = true;
+            }
+            bool matching_drone_name = false;
+            if (strncmp(s_drone_infos[drone_idx].drone_name, epkt_advertise->drone_name, MAX_DRONE_NAME_LENGTH) == 0) {
+                matching_drone_name = true;
+            }
+            
+            if (matching_mac_addr && matching_drone_name) {
                 drone_already_indexed = true;
                 break;
             }
+            else if (matching_mac_addr && !matching_drone_name) {
+                LOG_ERROR("Received AD from a drone with DIFFERENT NAME '%.*s' but the SAME MAC ADDRESS '"MACSTR"' as an already indexed drone.",
+                          MAX_DRONE_NAME_LENGTH, epkt_advertise->drone_name, MAC2STR(e_recv_info->mac_addr));
+                unexpected_drone = true;
+            }
+            else if (!matching_mac_addr && matching_drone_name) {
+                LOG_ERROR("Received AD from a drone with DIFFERENT MAC ADDRESS '"MACSTR"' but the SAME NAME '%.*s' as an already indexed drone.",
+                          MAC2STR(e_recv_info->mac_addr), MAX_DRONE_NAME_LENGTH, epkt_advertise->drone_name);
+                unexpected_drone = true;
+            }
         }
-        
-        if (!drone_already_indexed) {
+
+        if (unexpected_drone) break;
+
+        if (drone_already_indexed) {
+            // If we receive an advertisement from a drone that we are also connected to,
+            // then the drone probably restarted and lost the information that it was
+            // connected to us. Therefore we need to reconnect.
+            if (s_drone_infos[drone_idx].connected) {
+                ESPNow_Send_Info* e_send_info = espnow_send_info_acquire(drone_idx, EPKT_C2D_CONNECT, sizeof(EPacket_C2D_Connect), EPKT_FLAG_REQUIRE_ACK);
+                if (e_send_info) {
+                    espnow_send_info_complete(e_send_info);
+                }
+            }
+        }
+        else {
             // Check if there is an empty slot
             if (first_empty_idx < 0) {
-                DGL_LOG_ERROR("Failed to index Drone after advertisement, because all (%d) drone slots are full.", MAX_DRONES);
+                LOG_ERROR("Failed to index Drone after advertisement, because all (%d) drone slots are full.", MAX_DRONES);
                 break;
             }
             
             // Check if the drone name is already taken
             int idx_by_name = get_drone_idx_from_drone_name(epkt_advertise->drone_name);
             if (idx_by_name > 0) {
-                DGL_LOG_ERROR("Failed to index Drone after advertisement, because the name '%.*s' is already taken.",
+                LOG_ERROR("Failed to index Drone after advertisement, because the name '%.*s' is already taken.",
                               MAX_DRONE_NAME_LENGTH, epkt_advertise->drone_name);
                 break;
             }
@@ -480,7 +550,12 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_inf
         for (; i < MAX_ESPNOW_PACKETS_WAITING_FOR_ACK; ++i)
         {
             ESPNow_Send_Info* e_send_info = (ESPNow_Send_Info*) &s_espnow_send_infos_waiting_for_ack[i];
-            if (e_send_info->occupied && e_send_info->epkt.header.packet_id == acknowledged_packet_id) {
+            if (e_send_info->occupied && e_send_info->epkt.header.packet_id == acknowledged_packet_id)
+            {
+                int drone_idx = get_drone_idx_from_mac_addr(e_send_info->mac_addr);
+                if (drone_idx >= 0) {
+                    s_drone_infos[drone_idx].responding = true;
+                }
                 process_espnow_packet_acknowledge(e_send_info);
                 memset(e_send_info, 0, MAX_ESPNOW_SEND_INFO_SIZE);
                 break;
@@ -488,9 +563,20 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_inf
         }
 
         if (i == MAX_ESPNOW_PACKETS_WAITING_FOR_ACK) {
-            DGL_LOG_DEBUG("Received an EPKT_D2C_ACK_RECEIVE for packet '%d', but this packet was not in the 'wait for ack array'", acknowledged_packet_id);
+            LOG_DEBUG("Received an EPKT_D2C_ACK_RECEIVE for packet with id '%u', but this packet was not in the 'wait for ack array'", acknowledged_packet_id);
         }
         
+    } break;
+
+    case EPKT_D2C_LOG:
+    {
+        EPacket_D2C_Log* epkt_d2c_log = (EPacket_D2C_Log*) epkt;
+
+        int drone_idx = get_drone_idx_from_mac_addr(e_recv_info->mac_addr);
+        if (drone_idx < 0) break;
+
+        serial_send_msg_to_master("%.*s: %.*s", MAX_DRONE_NAME_LENGTH, s_drone_infos[drone_idx].drone_name,
+                                                epkt_d2c_log->header.payload_size, epkt_d2c_log->msg);
     } break;
         
     case EPKT_D2C_IMU_DATA:
@@ -510,26 +596,39 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_inf
         serial_send_info_complete(s_send_info);
         
     } break;
+
+    case EPKT_D2C_TELEMETRY:
+    {
+        EPacket_D2C_Telemetry* epkt_d2c_telem = (EPacket_D2C_Telemetry*) epkt;
+        
+        int drone_idx = get_drone_idx_from_mac_addr(e_recv_info->mac_addr);
+        if (drone_idx < 0) break;
+
+        Serial_Send_Info* s_send_info = serial_send_info_acquire(SPKT_C2M_DRONE_TELEMETRY, sizeof(SPacket_C2M_Drone_Telemetry));
+        if (!s_send_info) break;
+
+        SPacket_C2M_Drone_Telemetry* spkt_c2m_telem = (SPacket_C2M_Drone_Telemetry*) &s_send_info->spkt;
+        memcpy(&spkt_c2m_telem->telemetry, &epkt_d2c_telem->telemetry, sizeof(Payload_Telemetry));
+        memcpy(spkt_c2m_telem->drone_name, s_drone_infos[drone_idx].drone_name, MAX_DRONE_NAME_LENGTH);
+
+        serial_send_info_complete(s_send_info);
+                
+    } break;
         
     default:
-        DGL_LOG_DEBUG("Received ESP-Now Packet with unexpected or unknown type: '%d'", epkt->header.type);
+        LOG_DEBUG("Received ESP-Now Packet with unexpected or unknown type: '%u'", epkt->header.type);
     }
 }
 
 static bool read_next_serial_packet(SPacket* spkt, TickType_t ticks_to_wait)
 {
-    /* First checks for the delimiter then reads the next header which is used to create
-       the serial packet in memory. Then the payload of the packet is read.
-       Remember: packet = header + payload */
-
-    /* SHeader s_header = {0}; */
     int bytes_read_header = usb_serial_jtag_read_bytes(&spkt->header, sizeof(SHeader), ticks_to_wait);
     if (bytes_read_header != sizeof(SHeader)) {
         return false;
     }
 
     if (spkt->header.delim != SERIAL_DELIMITER) {
-        DGL_LOG_ERROR("Failed to read serial packet: Delimiter was not at the expected location");
+        LOG_ERROR("Failed to read serial packet: Delimiter was not at the expected location");
         // TODO: 'skip to next delimiter'
         return false;
     }
@@ -537,7 +636,7 @@ static bool read_next_serial_packet(SPacket* spkt, TickType_t ticks_to_wait)
     int bytes_read_payload = usb_serial_jtag_read_bytes(spkt->payload, spkt->header.payload_size, ticks_to_wait);
     
     if (bytes_read_payload != spkt->header.payload_size) {
-        DGL_LOG_ERROR("Failed to read payload of serial packet: Not enough data available, but timeout reached.");
+        LOG_ERROR("Failed to read payload of serial packet: Not enough data available, but timeout reached.");
         return false;
     }
 
@@ -555,9 +654,9 @@ static void process_incoming_serial_packet(const SPacket* spkt)
         int drone_idx = get_drone_idx_from_drone_name(spkt_m2c_connect->drone_name);
         if (drone_idx < 0) break;
 
-        // Already connected, do nothing.
         if (s_drone_infos[drone_idx].connected) {
-            DGL_LOG_DEBUG("Master requested to connect to drone, even though it was already connected.");
+            LOG_DEBUG("Can't 'connect' to drone, because its already connected.");
+            send_c2m_drone_connection_update(drone_idx, DRONE_CONN_UPDATE_SUCCESSFULLY_CONNECTED);
             break; 
         }
         
@@ -568,8 +667,9 @@ static void process_incoming_serial_packet(const SPacket* spkt)
         peer.ifidx = ESPNOW_WIFI_IF;
             
         esp_err_t ret = esp_now_add_peer(&peer);
-        if (ret != ESP_OK) {
-            DGL_LOG_ERROR("process_incoming_espnow_packet: Failed to add Drone to peer list, ESP_ERR: %s", esp_err_to_name(ret));
+        if (ret != ESP_OK && ret != ESP_ERR_ESPNOW_EXIST) { // ESP_ERR_ESPNOW_EXIST means the drone already was already in the peer list!
+            LOG_ERROR("process_incoming_espnow_packet: Failed to add Drone to peer list, ESP_ERR: %s", esp_err_to_name(ret));
+            send_c2m_drone_connection_update(drone_idx, DRONE_CONN_UPDATE_FAILED_TO_CONNECT);
             break;
         }
 
@@ -587,9 +687,9 @@ static void process_incoming_serial_packet(const SPacket* spkt)
         int drone_idx = get_drone_idx_from_drone_name(spkt_m2c_disconnect->drone_name);
         if (drone_idx < 0) break;
 
-        // Already not connected, do nothing.
         if (!s_drone_infos[drone_idx].connected) {
-            DGL_LOG_DEBUG("Master requested to disconnect from drone, even though it was already disconnected.");
+            LOG_DEBUG("Can't 'disconnect' from drone, because its already disconnected.");
+            send_c2m_drone_connection_update(drone_idx, DRONE_CONN_UPDATE_SUCCESSFULLY_DISCONNECTED);
             break;
         }
         
@@ -606,6 +706,11 @@ static void process_incoming_serial_packet(const SPacket* spkt)
         
         int drone_idx = get_drone_idx_from_drone_name(spkt_m2c_ctrl_cmds->drone_name);
         if (drone_idx < 0) break;
+
+        if (!s_drone_infos[drone_idx].connected) {
+            LOG_ERROR("Can't send controll commands because the drone is not connected.");
+            break;
+        }
 
         ESPNow_Send_Info* e_send_info = espnow_send_info_acquire(drone_idx, EPKT_C2D_CONTROLL_COMMANDS, sizeof(EPacket_C2D_Controll_Commands), 0);
         if (e_send_info) {
@@ -634,8 +739,14 @@ static void process_incoming_serial_packet(const SPacket* spkt)
         int drone_infos_idx = 0;
         for (int i = 0; i < MAX_DRONES; ++i) {
             if (s_drone_infos[i].occupied) {
-                spkt_c2m_drone_infos->drone_infos[drone_infos_idx].connected = s_drone_infos[i].connected;
-                memcpy(spkt_c2m_drone_infos->drone_infos[drone_infos_idx].drone_name, s_drone_infos[i].drone_name, MAX_DRONE_NAME_LENGTH);
+                Payload_Drone_Info* drone_info = &spkt_c2m_drone_infos->drone_infos[drone_infos_idx];
+                if (s_drone_infos[i].connected) {
+                    drone_info->flags |= DRONE_INFO_FLAG_IS_CONNETED;
+                }
+                if (s_drone_infos[i].responding) {
+                    drone_info->flags |= DRONE_INFO_FLAG_IS_RESPONDING;
+                }
+                memcpy(drone_info->drone_name, s_drone_infos[i].drone_name, MAX_DRONE_NAME_LENGTH);
                 ++drone_infos_idx;
             }
         }
@@ -643,9 +754,29 @@ static void process_incoming_serial_packet(const SPacket* spkt)
         serial_send_info_complete(s_send_info);
         
     } break;
+
+    case SPKT_M2C_PING_DRONE:
+    {
+        SPacket_M2C_Ping_Drone* spkt_m2c_ping = (SPacket_M2C_Ping_Drone*) spkt;
+        
+        int drone_idx = get_drone_idx_from_drone_name(spkt_m2c_ping->drone_name);
+        if (drone_idx < 0) break;
+        
+        if (!s_drone_infos[drone_idx].connected) {
+            LOG_ERROR("Can't ping drone because the drone is not connected.");
+            send_c2m_ping_drone_result(drone_idx, false);
+            break; 
+        }
+
+        ESPNow_Send_Info* e_send_info = espnow_send_info_acquire(drone_idx, EPKT_C2D_PING, sizeof(EPacket_C2D_Ping), EPKT_FLAG_REQUIRE_ACK);
+        if (e_send_info) {
+            espnow_send_info_complete(e_send_info);
+        }
+        
+    } break;
     
     default:
-        DGL_LOG_DEBUG("Received Serial Packet with unexpected or unknown type: '%d'", spkt->header.type);
+        LOG_DEBUG("Received Serial Packet with unexpected or unknown type: '%u'", spkt->header.type);
     }
 }
 
@@ -659,65 +790,75 @@ static void send_all_queued_espnow_packets()
 
         EPacket* epkt = &e_send_info->epkt;
 
-        // TODO: We are trying to send the packet until it goes through, because its difficult to put
-        // it back in the ringbuffer for some reason. This will be less problematic, when this
-        // function would just be a task, because it wouldn't block everything.
-        while (1) {
-            esp_err_t ret = esp_now_send(e_send_info->mac_addr, (uint8_t*) epkt, espnow_packet_size(epkt->header));
-            if (ret == ESP_OK) break;
-            
-            DGL_LOG_DEBUG("send_all_queued_espnow_packets: esp_now_send failed");
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
-
-        // Record the time this packet was sent
-        struct timeval tv_now;
-        gettimeofday(&tv_now, NULL);
-        e_send_info->last_send_time_us = (int64_t)tv_now.tv_sec * 1000000L + (int64_t)tv_now.tv_usec;
-
-        if (epkt->header.flags & EPKT_FLAG_REQUIRE_ACK)
+        esp_err_t ret = esp_now_send(e_send_info->mac_addr, (uint8_t*) epkt, espnow_packet_size(epkt->header));
+        if (ret == ESP_OK)
         {
-            // Find empty slot in s_espnow_send_infos_waiting_for_ack array
-            ESPNow_Send_Info* empty_slot = NULL;
-            for (int i = 0; i < MAX_ESPNOW_PACKETS_WAITING_FOR_ACK; ++i) {
-                if (((ESPNow_Send_Info*) &s_espnow_send_infos_waiting_for_ack[i])->occupied) {
-                    empty_slot = (ESPNow_Send_Info*) &s_espnow_send_infos_waiting_for_ack[i];
-                }
-            }
+            // Record the time this packet was sent
+            struct timeval tv_now;
+            gettimeofday(&tv_now, NULL);
+            e_send_info->last_send_time_us = (int64_t)tv_now.tv_sec * 1000000L + (int64_t)tv_now.tv_usec;
 
-            if (empty_slot) {
-                memcpy(empty_slot, e_send_info, e_send_info_size);
-            }
-            else {
-                DGL_LOG_DEBUG("send_all_queued_espnow_packets: Failed to add ESPNow Send Info to the 'wait for ack array', because all '%d' slots are full",
-                              MAX_ESPNOW_PACKETS_WAITING_FOR_ACK);
-            }
+            if (epkt->header.flags & EPKT_FLAG_REQUIRE_ACK)
+            {
+                // Find empty slot in s_espnow_send_infos_waiting_for_ack array
+                ESPNow_Send_Info* empty_slot = NULL;
+                for (int i = 0; i < MAX_ESPNOW_PACKETS_WAITING_FOR_ACK; ++i) {
+                    if (((ESPNow_Send_Info*) &s_espnow_send_infos_waiting_for_ack[i])->occupied == false) {
+                        empty_slot = (ESPNow_Send_Info*) &s_espnow_send_infos_waiting_for_ack[i];
+                        break;
+                    }
+                }
+
+                if (empty_slot) {
+                    memcpy(empty_slot, e_send_info, e_send_info_size);
+                }
+                else {
+                    LOG_DEBUG("send_all_queued_espnow_packets: Failed to add ESPNow_Send_Info to the 'wait for ack array', "
+                                  "because all '%d' slots are full", MAX_ESPNOW_PACKETS_WAITING_FOR_ACK);
+                }
+            }            
+        }
+        else {
+            LOG_DEBUG("send_all_queued_espnow_packets: esp_now_send failed, ESP_ERR: %s", esp_err_to_name(ret));
         }
 
         vRingbufferReturnItem(s_espnow_send_info_ringbuf, e_send_info);
     }
 
-    // Resend all the packets that are waiting for an ack after their timeout period
+    // Resend all the packets that are waiting for an ack, if their resend cooldown is over
     for (int i = 0; i < MAX_ESPNOW_PACKETS_WAITING_FOR_ACK; ++i)
     {
         ESPNow_Send_Info* e_send_info = (ESPNow_Send_Info*) &s_espnow_send_infos_waiting_for_ack[i];
-        if (e_send_info->occupied)
-        {
-            struct timeval tv_now;
-            gettimeofday(&tv_now, NULL);
-            int64_t time_us = (int64_t)tv_now.tv_sec * 1000000L + (int64_t)tv_now.tv_usec;
+        if (e_send_info->occupied == false) {
+            continue;
+        }
+        
+        struct timeval tv_now;
+        gettimeofday(&tv_now, NULL);
+        int64_t time_us = (int64_t)tv_now.tv_sec * 1000000L + (int64_t)tv_now.tv_usec;
 
-            if (time_us - e_send_info->last_send_time_us > ESPNOW_WAIT_FOR_ACK_RESEND_TIMEOUT_MS * 1000L)
-            {
-                esp_err_t ret = esp_now_send(e_send_info->mac_addr, (uint8_t*) &e_send_info->epkt, espnow_packet_size(e_send_info->epkt.header));
-                if (ret != ESP_OK) {
-                    DGL_LOG_DEBUG("send_all_queued_espnow_packets: esp_now_send failed");
-                    // When esp_now_send failed once, we shouldn't immeditely try to send more,
-                    // instead we return to continue where we left of the next time.
+        if (e_send_info->resend_count >= ESPNOW_WAIT_FOR_ACK_RESEND_TIMEOUTS_MS_LEN)
+        {
+            int drone_idx = get_drone_idx_from_mac_addr(e_send_info->mac_addr);
+            if (drone_idx >= 0) {
+                s_drone_infos[drone_idx].responding = false;
+            }
+            process_espnow_packet_failed_acknowledge(e_send_info);
+            memset(e_send_info, 0, MAX_ESPNOW_SEND_INFO_SIZE);
+        }
+        else if (time_us - e_send_info->last_send_time_us > espnow_wait_for_ack_resend_timeouts_ms[e_send_info->resend_count] * 1000)
+        {
+            esp_err_t ret = esp_now_send(e_send_info->mac_addr, (uint8_t*) &e_send_info->epkt, espnow_packet_size(e_send_info->epkt.header));
+            if (ret == ESP_OK) {
+                e_send_info->last_send_time_us = time_us;
+                e_send_info->resend_count += 1;
+            }
+            else {
+                LOG_DEBUG("send_all_queued_espnow_packets: esp_now_send failed: %s", esp_err_to_name(ret));
+                if (ret == ESP_ERR_ESPNOW_NO_MEM) {
+                    // We should delay a while before sending again, so lets just return and continue the next time.
                     return;
                 }
-
-                e_send_info->last_send_time_us = time_us;
             }
         }
     }
@@ -734,17 +875,12 @@ static void send_all_queued_serial_packets()
         SPacket* spkt = &s_send_info->spkt;
         size_t spkt_size = serial_packet_size(spkt->header);
 
-        // TODO: We are trying to send the packet until it goes through, because its difficult to put
-        // it back in the ringbuffer for some reason. This will be less problematic, when this
-        // function would just be a task, because it wouldn't block everything.
-        
-        int bytes_written = 0;
-        while (bytes_written == 0) {
-             bytes_written = usb_serial_jtag_write_bytes(spkt, spkt_size, 0);
+        int bytes_written = usb_serial_jtag_write_bytes(spkt, spkt_size, USB_SERIAL_WRITE_MAX_TICKS_TO_WAIT);
+        if (bytes_written != spkt_size) {
+            LOG_ERROR("Failed to write packet to the serialport");
         }
-        DGL_ASSERT(bytes_written == spkt_size);
 
-        vRingbufferReturnItem(s_serial_send_info_ringbuf, &s_send_info);
+        vRingbufferReturnItem(s_serial_send_info_ringbuf, s_send_info);
     }
 }
 
@@ -758,7 +894,7 @@ int app_main(void)
         ESPNow_Receive_Info* e_recv_info = xRingbufferReceive(s_espnow_receive_info_ringbuf, &e_recv_info_size, pdMS_TO_TICKS(0));
         if (e_recv_info) {
             process_incoming_espnow_packet(e_recv_info);
-            vRingbufferReturnItem(s_espnow_receive_info_ringbuf, &e_recv_info);
+            vRingbufferReturnItem(s_espnow_receive_info_ringbuf, e_recv_info);
         }
 
         if (usb_serial_jtag_is_connected()) {
@@ -774,8 +910,12 @@ int app_main(void)
         if (usb_serial_jtag_is_connected()) {
             send_all_queued_serial_packets();
         }
-        
-        vTaskDelay(pdMS_TO_TICKS(10)); // for debugging
+
+        // TODO: this delay is necessary because we need to yield for other tasks
+        // and also give some time to lower priority tasks. Actually we should block
+        // on a queue in this task instead, but we cant because we have two queues, that we would
+        // have to block on, so they should probably be unified or the task should be split.
+        vTaskDelay(1);
     }
 
     esp_restart();

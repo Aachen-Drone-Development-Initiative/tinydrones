@@ -4,31 +4,35 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-/* // our components */
+// our components
 #include "mpu6050.h"
 #include "espnow_messaging.h"
 #include "logging.h"
 #include "motor_driver.h"
 
-#define DEFAULT_TASK_PRIORITY    (5)
-#define DEFAULT_TASK_STACK_DEPTH (1000)
-
-#define TINYDRONE_TASK_PRIORITY    (DEFAULT_TASK_PRIORITY)
-#define TINYDRONE_TASK_STACK_DEPTH (DEFAULT_TASK_STACK_DEPTH * 5)
+#define DEFAULT_TASK_PRIORITY    5
+#define DEFAULT_TASK_STACK_DEPTH 1000
 
 static i2c_master_bus_handle_t  s_i2c_master_bus = NULL;
 static MPU6050_Handle           s_mpu = {0};
 
 static void tinydrone_task(void*)
 {
+    espnow_block_until_controller_connected();
+    
     while (true)
     {
+        LOG_DEBUG("main loop");
 
-        espnow_block_until_controller_connected();
-
-        espnow_send_log_to_controller("hello dongle\n");
+        Payload_Controll_Commands ctrl_cmds = espnow_get_latest_controll_commands();
+        espnow_send_msg_to_controller("ctrl_cmds: %d, %d, %d, %d, %u",
+                                      ctrl_cmds.pitch,
+                                      ctrl_cmds.yaw,
+                                      ctrl_cmds.roll,
+                                      ctrl_cmds.throttle,
+                                      ctrl_cmds.flags);
         
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
     vTaskDelete(NULL); // Delete this task
@@ -59,21 +63,21 @@ static esp_err_t tinydrone_init(gpio_num_t i2c_sda,
     {    
         esp_err_t ret = nvs_flash_init();
         if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-            if (nvs_flash_erase() != ESP_OK) TINY_ABORT("init_nvs: nvs_flash_erase failed");
+            assert(nvs_flash_erase() == ESP_OK);
             ret = nvs_flash_init();
         }
-        if(ret != ESP_OK) TINY_ABORT("init_nvs: nvs_flash_init failed");
+        assert(ret == ESP_OK);
     }
 
-    // init MPU6050
-    // TODO: Make this also create a task with specifiable priority
-    if (mpu6050_init(&s_mpu, s_i2c_master_bus, MPU6050_PLUS_MINUS_500_DEG_PER_SECOND, MPU6050_PLUS_MINUS_2G) != ESP_OK) {
-        // TODO: Do good error reporting
-        return ESP_FAIL;
-    }
+    /* // init MPU6050 */
+    /* // TODO: Make this also create a task with specifiable priority */
+    /* if (mpu6050_init(&s_mpu, s_i2c_master_bus, MPU6050_PLUS_MINUS_500_DEG_PER_SECOND, MPU6050_PLUS_MINUS_2G) != ESP_OK) { */
+    /*     // TODO: Do good error reporting */
+    /*     return ESP_FAIL; */
+    /* } */
     
     // Init espnow messaging
-    /* espnow_init_and_start_task(false, DEFAULT_TASK_PRIORITY, DEFAULT_TASK_STACK_DEPTH); */
+    espnow_init_and_start_task(false, DEFAULT_TASK_PRIORITY, DEFAULT_TASK_STACK_DEPTH * 10);
 
     return ESP_OK;
 }
@@ -84,22 +88,22 @@ void app_main(void)
                                         GPIO_NUM_10); // i2c_scl
 
     if (ret_init != ESP_OK) {
-        printf("ERROR: tinydrone_init() failed, halting...\n");
-        while (true); // halts everything
+        LOG_ERROR("tinydrone_init() failed, halting...\n");
+        abort();
     }
 
     TaskHandle_t* tinydrone_task_handle = NULL;
 
     BaseType_t ret_task_create = xTaskCreate(tinydrone_task,
                                              "tinydrone_task",
-                                             TINYDRONE_TASK_STACK_DEPTH,
+                                             DEFAULT_TASK_STACK_DEPTH * 5,
                                              NULL,
-                                             TINYDRONE_TASK_PRIORITY,
+                                             DEFAULT_TASK_PRIORITY,
                                              tinydrone_task_handle);
     
     if (ret_task_create != pdPASS) {
-        printf("ERROR: Failed to create task tinydrone_task, halting...\n");
-        while (true); // halts everything
+        LOG_ERROR("Failed to create tinydrone_task, halting...\n");
+        abort();
     }
 
     // Returning from app_main, deletes the main task (which is now replaced by the 'tinydrone_task')

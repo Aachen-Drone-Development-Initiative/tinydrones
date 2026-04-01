@@ -11,21 +11,13 @@ void espnow_init_and_start_task(bool long_range_wifi, uint32_t task_priority, ui
 
 // Terminates the task that handles receiving/sending packets, frees
 // any allocated memory, resets all values and deinitializes ESPNow.
-// TODO: void espnow_deinit();
+void espnow_deinit();
 
 // Blocks until a controller is connected
 void espnow_block_until_controller_connected();
 
-// Works just like printf
-bool espnow_send_log_to_controller(const char* format, ...);
-
 // Get the most recent controll commands.
-//
-// args:
-//     ctrl_cmds     - gets written into
-//     ticks_to_wait - how long to wait, to get access to the controll commands.
-//
-bool espnow_get_latest_controll_commands(Payload_Controll_Commands* ctrl_cmds, TickType_t ticks_to_wait);
+Payload_Controll_Commands espnow_get_latest_controll_commands();
 
 // Use this to initialize the header of your EPacket
 EHeader espnow_header_create(EPacket_Type type, size_t packet_size, EPacket_Flags flags);
@@ -38,4 +30,8 @@ EHeader espnow_header_create(EPacket_Type type, size_t packet_size, EPacket_Flag
 //     epkt.telemetry = ...;
 //     espnow_packet_send_to_controller((EPacket*) &epkt);
 //
-bool espnow_packet_send_to_controller(EPacket* epkt);
+bool espnow_send_packet_to_controller(EPacket* epkt);
+
+// Works just like printf
+bool espnow_send_msg_to_controller(const char* format, ...);
+
