@@ -31,7 +31,7 @@ enum {
 typedef uint8_t EPacket_Type;
 
 enum {
-    EPKT_FLAG_REQUIRE_ACK = 1 << 0,
+    EPKT_FLAG_REQUIRE_ACK   = 1 << 0, // The sender expects an *ACK_RECEIVE packet. Packet might be retransmitted otherwise.
 };
 typedef uint8_t EPacket_Flags;
 
