@@ -36,16 +36,16 @@ static_array_handle *static_array_init_array(size_t element_count, size_t elemen
  */
 void static_array_destroy_array(static_array_handle *array, TickType_t ticksToWait);
 
-/**
- * directly accesses array element
- *
- * @param array pointer to array
- * @param index index
- * @param ticksToWait max ticks to wait for semaphore
- * 
- * @return pointer to element
- */
-void *static_array_get_element(static_array_handle *array, size_t index, TickType_t ticksToWait);
+// /**
+//  * directly accesses array element
+//  *
+//  * @param array pointer to array
+//  * @param index index
+//  * @param ticksToWait max ticks to wait for semaphore
+//  * 
+//  * @return pointer to element
+//  */
+// void *static_array_get_element(static_array_handle *array, size_t index, TickType_t ticksToWait);
 
 /**
  * copies array element into buffer

@@ -4,19 +4,25 @@ from message_interface.serial_packets import *
 serialport = None
 all_packets = [] # A list of all the packets received so far
 
+
+def open_port(portname):
+    """opens a port as serialport, a controller should be connected to it"""
+    global serialport
+    if serialport != None:
+        serialport.close()
+    serialport = serial.Serial(port=portname, timeout=2) # 2 Second timeout seems reasonable
+
+
 def close_port():
+    """closes the port"""
     if serialport != None:
         serialport.close()
 
 
-def set_port(portname):
-    close_port()
-    global serialport
-    # 2 Second timeout seems reasonable
-    serialport = serial.Serial(port=portname, timeout=2)
-
-
 def read_packet():
+    """Reads the next packet from the controller, raises TimeoutError if there are not enough bytes.
+    If a log packet is received and it starts with `'ERROR'`, it will be printed immediately.
+    The packet will always be appended to the `all_packets` array."""
     # First reads and validates the delimiter, then the next packet-header, and finally the payload
     # using the information about the payload size from the packet-header.
         
@@ -64,6 +70,7 @@ def read_packet():
 
     
 def read_all_packets():
+    """Reads packets until the serialport runs out of bytes."""
     packets = []
     while serialport.inWaiting() > 0:
         try:
@@ -77,6 +84,7 @@ def read_all_packets():
 
     
 def expect_specific_packet(pkt_type: int, timeout_s: float):
+    """Reads packets until a specific packet is read, or the timeout `timeout_s` is reached"""
     packet = read_packet()
     time_begin_s = time.time()
     while packet.pkt_type != pkt_type:
@@ -88,6 +96,8 @@ def expect_specific_packet(pkt_type: int, timeout_s: float):
 
 
 def write_packet(data: bytes):
+    """Sends a packet to the controller. Use 'pack_m2c_*' functions from 'serial_packets.py'
+    to create a bytes object representing the specific packet."""
     bytes_written = serialport.write(data)
     serialport.flush()
     if bytes_written != len(data):
@@ -95,6 +105,8 @@ def write_packet(data: bytes):
 
 
 def list_drones():
+    """Prints a list of all drones that were detected by the controller and
+    whether they are connected and responding."""
     read_all_packets() # exhaust the serialport receive buffer
     write_packet(pack_m2c_get_drone_infos())
     packet = expect_specific_packet(SPKT_C2M_DRONE_INFOS, 3)
@@ -108,6 +120,7 @@ def list_drones():
 
 
 def connect(drone_name: str):
+    """Ask the controller to connect to a specific drone."""
     read_all_packets()
     write_packet(pack_m2c_connect_to_drone(drone_name))
     packet = expect_specific_packet(SPKT_C2M_DRONE_CONNECTION_UPDATE, 3)
@@ -120,6 +133,7 @@ def connect(drone_name: str):
 
 
 def disconnect(drone_name: str):
+    """Ask the controller to disconnect from a specific drone."""
     read_all_packets()
     write_packet(pack_m2c_disconnect_from_drone(drone_name))
     packet = expect_specific_packet(SPKT_C2M_DRONE_CONNECTION_UPDATE, 3)
@@ -132,18 +146,23 @@ def disconnect(drone_name: str):
 
 
 def arm(drone_name: str):
+    """Send a controll-commands packet to a drone where just the
+    CTRL_CMD_FLAG_IS_ARMED flag is set."""
     write_packet(pack_m2c_control_commands(drone_name,
                                            pitch=0, yaw=0, roll=0, throttle=0,
                                            flags=CTRL_CMD_FLAG_IS_ARMED))
 
 
 def disarm(drone_name: str):
+    """Send a zeroed out controll-commands packet to the drone (ie. do freeze)"""
     write_packet(pack_m2c_control_commands(drone_name,
                                            pitch=0, yaw=0, roll=0, throttle=0,
                                            flags=0))
 
 
 def ping(drone_name: str):
+    """Sends a ping packet to a drone, which promts the drone to acknowledge the ping.
+    If the controller receives the acknowledge the ping was successful."""
     write_packet(pack_m2c_ping_drone(drone_name))
     packet = expect_specific_packet(SPKT_C2M_PING_DRONE_RESULT, 3)
     if packet.drone_responded == True:
@@ -153,6 +172,8 @@ def ping(drone_name: str):
 
 
 def range_test(drone_name: str):
+    """Simple 'range-test' continuously prints whether pinging the drone was successful or not.
+    Stop with Ctrl-C."""
     try:
         while True:
             write_packet(pack_m2c_ping_drone(drone_name))
@@ -172,10 +193,13 @@ def range_test(drone_name: str):
 
 
 def restart(drone_name: str):
+    """Send a restart packet to a drone. We cannot guarantee that the packet arrived/
+    that the drone actually restarts."""
     write_packet(pack_m2c_restart_drone(drone_name))
 
 
 def monitor():
+    """Continuously read packets and print them. Stop with Ctrl-C."""
     try:
         while True:
             if serialport.inWaiting() > 0:

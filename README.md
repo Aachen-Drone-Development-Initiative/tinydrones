@@ -1,5 +1,10 @@
 # Tinydrones
 
+## tinyapi.py
+
+tinyapi.py communicates with a controller over USB (via serialport) and provides low level functions like `write_packet()`
+and high level functions like `ping_drone`
+
 ## Code Style
 
 #### Naming

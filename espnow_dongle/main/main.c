@@ -106,6 +106,7 @@ static RingbufHandle_t s_serial_send_info_ringbuf = NULL;
 
 // waiting packets
 static uint8_t s_espnow_send_infos_waiting_for_ack[MAX_ESPNOW_PACKETS_WAITING_FOR_ACK][MAX_ESPNOW_SEND_INFO_SIZE] = {0};
+static SemaphoreHandle_t s_espnow_send_infos_waiting_for_ack_mutex = NULL;
 
 static void usb_serial_jtag_init()
 {
@@ -176,6 +177,8 @@ static void dongle_init()
     s_espnow_receive_info_ringbuf = xRingbufferCreate(ESPNOW_RECEIVE_INFO_RINGBUF_SIZE, RINGBUF_TYPE_NOSPLIT);
     s_espnow_send_info_ringbuf    = xRingbufferCreate(ESPNOW_SEND_INFO_RINGBUF_SIZE,    RINGBUF_TYPE_NOSPLIT);
     s_serial_send_info_ringbuf    = xRingbufferCreate(SERIAL_SEND_INFO_RINGBUF_SIZE,    RINGBUF_TYPE_NOSPLIT);
+
+    s_espnow_send_infos_waiting_for_ack_mutex = xSemaphoreCreateMutex();
 
     LOG_DEBUG("Dongle Initialized!");
 }
@@ -555,20 +558,24 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_inf
         if (drone_idx < 0) break;
         
         int i = 0;
-        for (; i < MAX_ESPNOW_PACKETS_WAITING_FOR_ACK; ++i)
+        xSemaphoreTake(s_espnow_send_infos_waiting_for_ack_mutex, portMAX_DELAY);
         {
-            ESPNow_Send_Info* e_send_info = (ESPNow_Send_Info*) &s_espnow_send_infos_waiting_for_ack[i];
-            if (e_send_info->occupied && e_send_info->epkt.header.packet_id == acknowledged_packet_id)
+            for (; i < MAX_ESPNOW_PACKETS_WAITING_FOR_ACK; ++i)
             {
-                int drone_idx = get_drone_idx_from_mac_addr(e_send_info->mac_addr);
-                if (drone_idx >= 0) {
-                    s_drone_infos[drone_idx].responding = true;
+                ESPNow_Send_Info* e_send_info = (ESPNow_Send_Info*) &s_espnow_send_infos_waiting_for_ack[i];
+                if (e_send_info->occupied && e_send_info->epkt.header.packet_id == acknowledged_packet_id)
+                {
+                    int drone_idx = get_drone_idx_from_mac_addr(e_send_info->mac_addr);
+                    if (drone_idx >= 0) {
+                        s_drone_infos[drone_idx].responding = true;
+                    }
+                    process_espnow_packet_acknowledge(e_send_info);
+                    memset(e_send_info, 0, MAX_ESPNOW_SEND_INFO_SIZE);
+                    break;
                 }
-                process_espnow_packet_acknowledge(e_send_info);
-                memset(e_send_info, 0, MAX_ESPNOW_SEND_INFO_SIZE);
-                break;
             }
         }
+        xSemaphoreGive(s_espnow_send_infos_waiting_for_ack_mutex);
 
         if (i == MAX_ESPNOW_PACKETS_WAITING_FOR_ACK) {
             LOG_DEBUG("Received an EPKT_D2C_ACK_RECEIVE for packet with id '%u', but this packet was not in the 'wait for ack array'", acknowledged_packet_id);
