@@ -579,6 +579,9 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_inf
 
         if (i == MAX_ESPNOW_PACKETS_WAITING_FOR_ACK) {
             LOG_DEBUG("Received an EPKT_D2C_ACK_RECEIVE for packet with id '%u', but this packet was not in the 'wait for ack array'", acknowledged_packet_id);
+            size_t recv_free_size = xRingbufferGetCurFreeSize(s_espnow_receive_info_ringbuf);
+            size_t send_free_size = xRingbufferGetCurFreeSize(s_espnow_send_info_ringbuf);
+            LOG_DEBUG("recv_free_size=%zu, send_free_size=%zu", recv_free_size, send_free_size);
         }
         
     } break;

@@ -43,7 +43,7 @@ typedef struct {
     EPacket_Type type;          // The packet type
     EPacket_Flags flags;        // Flags to enable or disable things (currently just acknowledge)
     int16_t payload_size;       // payload_size = packet_size - sizeof(EHeader)
-    EPacket_ID packet_id;       // A 'unique' randomly generated id
+    EPacket_ID packet_id;       // A 'unique' randomly generated id, that is always != 0
 } PACKED EHeader;
 
 // Abstract ESP-Now Packet

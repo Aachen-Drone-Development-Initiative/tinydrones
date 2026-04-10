@@ -28,12 +28,15 @@ static void tinydrone_task(void*)
 
         Payload_Controll_Commands ctrl_cmds;
         espnow_get_latest_controll_commands(&ctrl_cmds);
-        espnow_send_msg_to_controller("ctrl_cmds: %d, %d, %d, %d, %u",
-                                      ctrl_cmds.pitch,
-                                      ctrl_cmds.yaw,
-                                      ctrl_cmds.roll,
-                                      ctrl_cmds.throttle,
-                                      ctrl_cmds.flags);
+
+        if (ctrl_cmds.flags & CTRL_CMD_FLAG_IS_ARMED) {
+            CONTR_LOG_DEBUG("is armed!");
+            //...
+        }
+        else {
+            CONTR_LOG_DEBUG("not armed.");
+        }
+
         
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
