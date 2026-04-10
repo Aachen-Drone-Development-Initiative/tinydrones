@@ -19,6 +19,18 @@ typedef struct {
 } PACKED Payload_Controll_Commands;
 
 typedef struct {
+    float roll_p;
+    float roll_i;
+    float roll_d;
+    float pitch_p;
+    float pitch_i;
+    float pitch_d;
+    float yaw_p;
+    float yaw_i;
+    float yaw_d;
+} PACKED Payload_Drone_Settings;
+
+typedef struct {
     int64_t time_us;
     float omega_x, omega_y, omega_z; // [rad/s]
     float acc_x, acc_y, acc_z;       // [m/s^2]

@@ -49,6 +49,7 @@ const int espnow_wait_for_ack_resend_timeouts_ms[] = {20, 40, 80, 160, 320, 640}
 static void serial_send_msg_to_master(const char* format, ...);
 
 #define LOG_ERROR(format, ...) serial_send_msg_to_master("ERROR (DONGLE): " format "\n", ##__VA_ARGS__)
+#define LOG_INFO(format, ...) serial_send_msg_to_master("INFO (DONGLE): " format "\n", ##__VA_ARGS__)
 
 #define ENABLE_DEBUG_LOGS 1
 
@@ -421,6 +422,10 @@ static void process_espnow_packet_acknowledge(const ESPNow_Send_Info* e_send_inf
         }
         
     } break;
+
+    case EPKT_C2D_DRONE_SETTINGS: {
+        LOG_INFO("Updated settings on drone '%s'.", s_drone_infos[drone_idx].drone_name);
+    } break;
         
     default:
         LOG_DEBUG("process_espnow_packet_acknowledge: Unexpected packet type '%u'", epkt->header.type);
@@ -446,6 +451,10 @@ static void process_espnow_packet_failed_acknowledge(const ESPNow_Send_Info* e_s
 
     case EPKT_C2D_PING: {
         send_c2m_ping_drone_result(drone_idx, false);
+    } break;
+
+    case EPKT_C2D_DRONE_SETTINGS: {
+        LOG_ERROR("Failed to update settings on drone '%s'.", s_drone_infos[drone_idx].drone_name);
     } break;
 
     default:
@@ -579,9 +588,6 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_inf
 
         if (i == MAX_ESPNOW_PACKETS_WAITING_FOR_ACK) {
             LOG_DEBUG("Received an EPKT_D2C_ACK_RECEIVE for packet with id '%u', but this packet was not in the 'wait for ack array'", acknowledged_packet_id);
-            size_t recv_free_size = xRingbufferGetCurFreeSize(s_espnow_receive_info_ringbuf);
-            size_t send_free_size = xRingbufferGetCurFreeSize(s_espnow_send_info_ringbuf);
-            LOG_DEBUG("recv_free_size=%zu, send_free_size=%zu", recv_free_size, send_free_size);
         }
         
     } break;
@@ -812,6 +818,30 @@ static void process_incoming_serial_packet(const SPacket* spkt)
 
         ESPNow_Send_Info* e_send_info = espnow_send_info_acquire(drone_idx, EPKT_C2D_RESTART, sizeof(EPacket_C2D_Restart), EPKT_FLAG_REQUIRE_ACK);
         if (e_send_info) {
+            espnow_send_info_complete(e_send_info);
+        }
+        
+    } break;
+
+    case SPKT_M2C_DRONE_SETTINGS:
+    {
+        SPacket_M2C_Drone_Settings* spkt_m2c_settings = (SPacket_M2C_Drone_Settings*) spkt;
+
+        int drone_idx = get_drone_idx_from_drone_name(spkt_m2c_settings->drone_name);
+        if (drone_idx < 0) break;
+
+        if (!s_drone_infos[drone_idx].connected) {
+            LOG_ERROR("Can't send drone settings because the drone is not connected.");
+            break;
+        }
+
+        ESPNow_Send_Info* e_send_info = espnow_send_info_acquire(drone_idx,
+                                                                 EPKT_C2D_DRONE_SETTINGS,
+                                                                 sizeof(EPacket_C2D_Drone_Settings),
+                                                                 EPKT_FLAG_REQUIRE_ACK);
+        if (e_send_info) {
+            EPacket_C2D_Drone_Settings* epkt_c2d_settings = (EPacket_C2D_Drone_Settings*) &e_send_info->epkt;
+            memcpy(&epkt_c2d_settings->settings, &spkt_m2c_settings->settings, sizeof(Payload_Drone_Settings));
             espnow_send_info_complete(e_send_info);
         }
         

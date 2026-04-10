@@ -488,6 +488,13 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Info* e_recv_inf
         set_control_commands(epkt_c2d_ctrl_cmds->ctrl_cmds);
         
     } break;
+
+    case EPKT_C2D_DRONE_SETTINGS:
+    {
+        EPacket_C2D_Drone_Settings* epkt_c2d_settings = (EPacket_C2D_Drone_Settings*) epkt;
+        (void) epkt_c2d_settings;
+        // Handle incoming drone settings here once the flight controller exposes a consumer for them.
+    } break;
     
     case EPKT_C2D_ACK_RECEIVE:
     {

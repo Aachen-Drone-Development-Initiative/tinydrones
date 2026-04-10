@@ -16,6 +16,7 @@ enum {
     SPKT_M2C_GET_DRONE_INFOS = 67,        // Master requests basic infos about all available Drones, such as their names
     SPKT_M2C_PING_DRONE = 68,             // Master requests a Ping-Pong response test for a specific Drone
     SPKT_M2C_RESTART_DRONE = 69,          // Master requests to restart a specific Drone
+    SPKT_M2C_DRONE_SETTINGS = 70,         // Master sends settings for a specific Drone to the Controller
 
     SPKT_C2M_DRONE_CONNECTION_UPDATE = 96, // Controller notifies the Master about a successful connection to the Drone
     SPKT_C2M_DRONE_INFOS = 97,             // Controller sends the requested basic infos about available Drones to the Master
@@ -80,6 +81,12 @@ typedef struct {
     SHeader header;             // type == SPKT_M2C_RESTART_DRONE
     char drone_name[MAX_DRONE_NAME_LENGTH];
 } PACKED SPacket_M2C_Restart_Drone;
+
+typedef struct {
+    SHeader header;             // type == SPKT_M2C_DRONE_SETTINGS
+    Payload_Drone_Settings settings;
+    char drone_name[MAX_DRONE_NAME_LENGTH];
+} PACKED SPacket_M2C_Drone_Settings;
 
 
 // C2M - Controller to Master Packets

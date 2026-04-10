@@ -63,7 +63,7 @@ def read_packet():
 
     # Always print error messages from the controller
     if packet.pkt_type == SPKT_C2M_LOG:
-        if packet.msg.startswith("ERROR"):
+        if packet.msg.startswith("ERROR") or packet.msg.startswith("INFO"):
             print(packet.msg.rstrip("\n\0"))
 
     return packet
@@ -196,6 +196,17 @@ def restart(drone_name: str):
     """Send a restart packet to a drone. We cannot guarantee that the packet arrived/
     that the drone actually restarts."""
     write_packet(pack_m2c_restart_drone(drone_name))
+
+
+def set_drone_settings(drone_name: str,
+                       roll_p: float, roll_i: float, roll_d: float,
+                       pitch_p: float, pitch_i: float, pitch_d: float,
+                       yaw_p: float, yaw_i: float, yaw_d: float):
+    """Send PID settings for roll, pitch, and yaw to a drone."""
+    write_packet(pack_m2c_drone_settings(drone_name,
+                                         roll_p, roll_i, roll_d,
+                                         pitch_p, pitch_i, pitch_d,
+                                         yaw_p, yaw_i, yaw_d))
 
 
 def monitor():

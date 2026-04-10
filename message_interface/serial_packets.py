@@ -13,6 +13,7 @@ SPKT_M2C_CONTROLL_COMMANDS = 66
 SPKT_M2C_GET_DRONE_INFOS = 67
 SPKT_M2C_PING_DRONE = 68
 SPKT_M2C_RESTART_DRONE = 69
+SPKT_M2C_DRONE_SETTINGS = 70
 
 SPKT_C2M_DRONE_CONNECTION_UPDATE = 96
 SPKT_C2M_DRONE_INFOS = 97
@@ -58,6 +59,20 @@ def pack_m2c_control_commands(drone_name: str, pitch: int, yaw: int, roll: int, 
     payload_format = '<hhhhB' + str(MAX_DRONE_NAME_LENGTH) + 's'
     header = pack_header(SPKT_M2C_CONTROLL_COMMANDS, struct.calcsize(payload_format))
     payload = struct.pack(payload_format, pitch, yaw, roll, throttle, flags, drone_name.encode('ascii'))
+    return header + payload
+
+
+def pack_m2c_drone_settings(drone_name: str,
+                            roll_p: float, roll_i: float, roll_d: float,
+                            pitch_p: float, pitch_i: float, pitch_d: float,
+                            yaw_p: float, yaw_i: float, yaw_d: float) -> bytes:
+    payload_format = '<fffffffff' + str(MAX_DRONE_NAME_LENGTH) + 's'
+    header = pack_header(SPKT_M2C_DRONE_SETTINGS, struct.calcsize(payload_format))
+    payload = struct.pack(payload_format,
+                          roll_p, roll_i, roll_d,
+                          pitch_p, pitch_i, pitch_d,
+                          yaw_p, yaw_i, yaw_d,
+                          drone_name.encode('ascii'))
     return header + payload
 
 

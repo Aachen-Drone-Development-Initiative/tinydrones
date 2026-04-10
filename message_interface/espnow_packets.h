@@ -27,6 +27,7 @@ enum {
     EPKT_C2D_ACK_RECEIVE = 35,        // Controller acknowledges that a specific packet was received
     EPKT_C2D_PING = 36,               // Controller expects an ACK_RECEIVE from the drone
     EPKT_C2D_RESTART = 37,            // Controller asks Drone to restart
+    EPKT_C2D_DRONE_SETTINGS = 38,     // Controller sends settings to the Drone
 };
 typedef uint8_t EPacket_Type;
 
@@ -113,6 +114,11 @@ typedef struct {
 typedef struct {
     EHeader header;             // type == EPKT_C2D_RESTART
 } PACKED EPacket_C2D_Restart;
+
+typedef struct {
+    EHeader header;             // type == EPKT_C2D_DRONE_SETTINGS, flags = EPKT_FLAG_REQUIRE_ACK
+    Payload_Drone_Settings settings;
+} PACKED EPacket_C2D_Drone_Settings;
 
 
 #undef PACKED
