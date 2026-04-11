@@ -3,7 +3,7 @@
 // our components
 #include "logging.h"
 
-#inlcude <string.h>
+#include <string.h>
 #include <stdarg.h>
 #include <stdatomic.h>
 
@@ -20,7 +20,7 @@
 
 // Packet acknowledging
 #define MAX_ESPNOW_PACKETS_WAITING_FOR_ACK 10
-const int espnow_wait_for_ack_resend_timeouts_ms[] = {10, 20, 40, 80, 160, 320, 640};
+const int espnow_wait_for_ack_resend_timeouts_ms[] = {20, 40, 80, 160, 320};
 #define ESPNOW_WAIT_FOR_ACK_RESEND_TIMEOUTS_MS_LEN (sizeof(espnow_wait_for_ack_resend_timeouts_ms) / sizeof(int))
 
 // Max ticks to wait when trying to acquire memory from the event ringbuffer.
@@ -44,6 +44,7 @@ const int espnow_wait_for_ack_resend_timeouts_ms[] = {10, 20, 40, 80, 160, 320, 
 // ESP-Now/Wifi settings
 #define ESPNOW_WIFI_MODE WIFI_MODE_STA // The drone should be in station mode (STA), because it connects to the controllers access point (AP).
 #define ESPNOW_WIFI_IF   ESP_IF_WIFI_STA // We want to use the station interface (IF).
+#define ESPNOW_SEND_COOLDOWN_WHEN_ESPNOW_ERR_OUT_OF_MEM pdMS_TO_TICKS(100)
 
 // Sending to this 'mac address' means sending to all ESPs in range.
 static const uint8_t broadcast_mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
@@ -107,20 +108,18 @@ static uint8_t s_unacknowledged_espnow_send_events[MAX_ESPNOW_PACKETS_WAITING_FO
 // Advertisement timer, sends an advertisement every so often if we are not connected to a controller.
 static esp_timer_handle_t s_periodic_advertise_timer = NULL;
 
+static int64_t s_time_of_last_espnow_err_out_of_memory_us = 0;
+
 static ESPNow_Send_Event* get_unacknowledged_espnow_send_event_from_packet_id(EPacket_ID target_packet_id)
 {
-    ESPNow_Send_Event* ret = NULL;
-    for (int i = 0; i < MAX_ESPNOW_PACKETS_WAITING_FOR_ACK; ++i)
-    {
+    for (int i = 0; i < MAX_ESPNOW_PACKETS_WAITING_FOR_ACK; ++i) {
         ESPNow_Send_Event* e_send_event = (ESPNow_Send_Event*) &s_unacknowledged_espnow_send_events[i];
-        EPacket_ID packet_id = e_send_event->epkt.header.packet_id;
-        if (packet_id == target_packet_id) {
-            ret = e_send_event;
-            break;
+        if (e_send_event->epkt.header.packet_id == target_packet_id) {
+            return e_send_event;
         }
     }
     
-    return ret;
+    return NULL;
 }
 
 static ESPNow_Send_Event* acquire_unacknowledged_espnow_send_event()
@@ -130,15 +129,18 @@ static ESPNow_Send_Event* acquire_unacknowledged_espnow_send_event()
 
 static void release_unacknowledged_espnow_send_event(ESPNow_Send_Event* e_send_event)
 {
-    // Calculate index into 's_unacknowledged_espnow_send_events' from pointer
+    ptrdiff_t relative_ptr = (uint8_t*) e_send_event - &s_unacknowledged_espnow_send_events[0][0];
+    int idx = (int) (relative_ptr / MAX_ESPNOW_SEND_EVENT_SIZE);
 
-    int relative_ptr = (void*) e_send_event - (void*) s_unacknowledged_espnow_send_events;
-    int idx = relative_ptr / MAX_ESPNOW_SEND_EVENT_SIZE;
-    assert(relative_ptr >= 0);
-    assert(relative_ptr % MAX_ESPNOW_SEND_EVENT_SIZE == 0);
-    assert(idx >= 0 && idx < MAX_ESPNOW_PACKETS_WAITING_FOR_ACK);
+    bool e_send_event_from_wait_for_ack_buffer = (idx >= 0 && idx < MAX_ESPNOW_PACKETS_WAITING_FOR_ACK);
 
-    memset(e_send_event, 0, MAX_ESPNOW_SEND_EVENT_SIZE);
+    if (e_send_event_from_wait_for_ack_buffer) {
+        if (relative_ptr % MAX_ESPNOW_SEND_EVENT_SIZE != 0) {
+            CONTR_LOG_ERROR("release_unacknowledged_espnow_send_event: relative_ptr % MAX_ESPNOW_SEND_EVENT_SIZE != 0");
+            return;
+        }
+        memset(e_send_event, 0, MAX_ESPNOW_SEND_EVENT_SIZE);
+    }
 }
 
 static bool get_controller_connected()
@@ -220,7 +222,7 @@ static void espnow_receive_callback(const esp_now_recv_info_t *recv_info, const 
     UBaseType_t ret = xRingbufferSendAcquire(s_event_ringbuf,
                                              (void**) &e_recv_event,
                                              sizeof(ESPNow_Receive_Event) - sizeof(EPacket) + length,
-                                             EVENT_RINGBUF_ACQUIRE_TICKS_TO_WAIT_FOR_MAIN_TASK);
+                                             EVENT_RINGBUF_ACQUIRE_TICKS_TO_WAIT_FOR_OTHER_TASK);
 
     if (ret != pdTRUE) {
         CONTR_LOG_ERROR("espnow_receive_callback: Creating receive event in ringbuffer failed. The ringbuffer might be full.");
@@ -340,7 +342,7 @@ static void delete_and_stop_resend_pkt_timer(ESPNow_Send_Event* e_send_event)
     }
     
     esp_err_t ret = esp_timer_stop(e_send_event->pkt_resend_timer);
-    if (ret != ESP_OK) {
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
         CONTR_LOG_ERROR("delete_and_stop_resend_pkt_timer: esp_timer_stop failed, ESP_ERR: %s", esp_err_to_name(ret));
     }
         
@@ -352,7 +354,7 @@ static void delete_and_stop_resend_pkt_timer(ESPNow_Send_Event* e_send_event)
     e_send_event->pkt_resend_timer = NULL;
 }
 
-static void process_espnow_packet_acknowledge(ESPNow_Send_Event* e_send_event)
+static void handle_espnow_packet_acknowledge(ESPNow_Send_Event* e_send_event)
 {
     delete_and_stop_resend_pkt_timer(e_send_event);
 
@@ -367,7 +369,7 @@ static void process_espnow_packet_acknowledge(ESPNow_Send_Event* e_send_event)
     release_unacknowledged_espnow_send_event(e_send_event);
 }
 
-static void process_espnow_packet_failed_acknowledge(ESPNow_Send_Event* e_send_event)
+static void handle_espnow_packet_failed_acknowledge(ESPNow_Send_Event* e_send_event)
 {
     delete_and_stop_resend_pkt_timer(e_send_event);
 
@@ -406,7 +408,7 @@ static void queue_unacknowledged_espnow_packet_for_resend(void* arg)
     }
 }
 
-static void process_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_event)
+static void handle_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_event)
 {
     const EPacket* epkt = &e_recv_event->epkt;
 
@@ -417,7 +419,7 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_ev
     }
 
     if (!from_controller && epkt->header.type != EPKT_C2D_CONNECT) {
-        CONTR_LOG_ERROR("process_incoming_espnow_packet: Received packet of type '%d' from unknow sender, which is not allowed.", epkt->header.type);
+        CONTR_LOG_ERROR("handle_incoming_espnow_packet: Received packet of type '%d' from unknow sender, which is not allowed.", epkt->header.type);
         return;
     }
     
@@ -433,7 +435,7 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_ev
         if (s_controller.in_peer_list) {
             esp_err_t ret = esp_now_del_peer(s_controller.mac_addr);
             if (ret != ESP_OK) {
-                CONTR_LOG_ERROR("process_incoming_espnow_packet: Failed to delete Controller from peer list, ESP_ERR: %s", esp_err_to_name(ret));
+                CONTR_LOG_ERROR("handle_incoming_espnow_packet: Failed to delete Controller from peer list, ESP_ERR: %s", esp_err_to_name(ret));
             }
             s_controller.in_peer_list = false;
         }
@@ -445,7 +447,7 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_ev
         peer.ifidx = ESPNOW_WIFI_IF;
         esp_err_t ret = esp_now_add_peer(&peer);
         if (ret != ESP_OK) {
-            CONTR_LOG_ERROR("process_incoming_espnow_packet: Failed to add Controller to peer list, ESP_ERR: %s", esp_err_to_name(ret));
+            CONTR_LOG_ERROR("handle_incoming_espnow_packet: Failed to add Controller to peer list, ESP_ERR: %s", esp_err_to_name(ret));
             return;
         }
 
@@ -506,7 +508,7 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_ev
         ESPNow_Send_Event* e_send_event = get_unacknowledged_espnow_send_event_from_packet_id(acknowledged_packet_id);
             
         if (e_send_event) {
-            process_espnow_packet_acknowledge(e_send_event);
+            handle_espnow_packet_acknowledge(e_send_event);
         }
         else {
             CONTR_LOG_DEBUG("Received an EPKT_C2D_ACK_RECEIVE for packet '%d', but this packet "
@@ -527,15 +529,30 @@ static void process_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_ev
     }
 }
 
+static bool espnow_send_bytes(uint8_t* mac_addr, uint8_t* bytes, size_t size)
+{
+    int64_t time_us = esp_timer_get_time();
+    if (time_us - s_time_of_last_espnow_err_out_of_memory_us < ESPNOW_SEND_COOLDOWN_WHEN_ESPNOW_ERR_OUT_OF_MEM) {
+        return false;
+    }
+    
+    esp_err_t ret = esp_now_send(mac_addr, bytes, size);
+    if (ret != ESP_OK) {
+        LOG_ERROR("espnow_send_bytes: esp_now_send failed, ESP_ERR: %s", esp_err_to_name(ret));
+        if (ret == ESP_ERR_ESPNOW_NO_MEM) {
+            s_time_of_last_espnow_err_out_of_memory_us = esp_timer_get_time();
+        }
+        return false;
+    }
+
+    return true;
+}
+
 static void send_espnow_packet(ESPNow_Send_Event* e_send_event)
 {
     EPacket* epkt = &e_send_event->epkt;
 
-    esp_err_t ret = esp_now_send(e_send_event->mac_addr, (uint8_t*) epkt, espnow_packet_size(epkt->header));
-    if (ret != ESP_OK) {
-        LOG_ERROR("send_espnow_packet: esp_now_send failed, ESP_ERR: %s", esp_err_to_name(ret));
-        return;
-    }
+    espnow_send_bytes(e_send_event->mac_addr, (uint8_t*) epkt, espnow_packet_size(epkt->header));
     
     if (epkt->header.flags & EPKT_FLAG_REQUIRE_ACK)
     {
@@ -547,7 +564,7 @@ static void send_espnow_packet(ESPNow_Send_Event* e_send_event)
             memcpy(e_send_event_copy, e_send_event, e_send_event_size);
             bool success = create_and_start_resend_pkt_timer(e_send_event_copy, espnow_wait_for_ack_resend_timeouts_ms[0] * 1000);
             if (!success) {
-                process_espnow_packet_failed_acknowledge(e_send_event_copy);
+                handle_espnow_packet_failed_acknowledge(e_send_event_copy);
             }
         }
         else {
@@ -570,14 +587,14 @@ static void resend_unacknowledged_espnow_packet(ESPNow_Resend_Unacknowledged_Eve
     e_send_event->resend_count += 1;
 
     if (e_send_event->resend_count >= ESPNOW_WAIT_FOR_ACK_RESEND_TIMEOUTS_MS_LEN) {
-        process_espnow_packet_failed_acknowledge(e_send_event);
+        handle_espnow_packet_failed_acknowledge(e_send_event);
     }
     else {
-        esp_err_t ret = esp_timer_restart(e_send_event->pkt_resend_timer,
-                                          espnow_wait_for_ack_resend_timeouts_ms[e_send_event->resend_count] * 1000);
+        esp_err_t ret = esp_timer_start_once(e_send_event->pkt_resend_timer,
+                                             espnow_wait_for_ack_resend_timeouts_ms[e_send_event->resend_count] * 1000);
         if (ret != ESP_OK) {
-            LOG_ERROR("resend_unacknowledged_espnow_packet: esp_timer_restart failed, ESP_ERR: %s", esp_err_to_name(ret));
-            process_espnow_packet_failed_acknowledge(e_send_event);
+            LOG_ERROR("resend_unacknowledged_espnow_packet: esp_timer_start_once failed, ESP_ERR: %s", esp_err_to_name(ret));
+            handle_espnow_packet_failed_acknowledge(e_send_event);
         }
     }
 }
@@ -594,7 +611,7 @@ static void espnow_messaging_task(void*)
         switch (event_type) {
             
         case ESPNOW_RECEIVE_EVENT: {
-            process_incoming_espnow_packet((ESPNow_Receive_Event*) event);
+            handle_incoming_espnow_packet((ESPNow_Receive_Event*) event);
         } break;
             
         case ESPNOW_SEND_EVENT: {
