@@ -1,7 +1,9 @@
 #include "espnow_packets.h"
 #include "serial_packets.h"
 
-#include "string.h"
+#include <string.h>
+#include <stdarg.h>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/ringbuf.h"
 #include "freertos/semphr.h"
