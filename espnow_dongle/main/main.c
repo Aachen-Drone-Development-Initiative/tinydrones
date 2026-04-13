@@ -89,6 +89,9 @@ typedef struct {
     Event_Type event_type;
     uint8_t mac_addr[ESP_NOW_ETH_ALEN];
     int resend_count;
+    bool send_simple_response_to_master;
+    SPacket_ID origin_serial_packet_id;
+    SPacket_Type origin_serial_packet_type;
     esp_timer_handle_t pkt_resend_timer;
     EPacket epkt;
 } ESPNow_Send_Event;
@@ -197,10 +200,16 @@ static SHeader serial_header_create(SPacket_Type type, size_t packet_size)
 {
     ASSERT(packet_size >= sizeof(SPacket));
 
+    SPacket_ID packet_id = esp_random();
+    while (packet_id == 0) {
+        packet_id = esp_random();
+    }
+
     return (SHeader) {
         .delim = SERIAL_DELIMITER,
         .type = type,
         .payload_size = packet_size - sizeof(SPacket),
+        .packet_id = packet_id,
     };
 }
 
@@ -372,10 +381,7 @@ static ESPNow_Send_Event* espnow_send_event_acquire_raw(const uint8_t* dest_mac_
     return e_send_event;
 }
 
-static ESPNow_Send_Event* espnow_send_event_acquire_from_drone_idx(int dest_drone_idx,
-                                                                   EPacket_Type type,
-                                                                   size_t packet_size,
-                                                                   EPacket_Flags flags)
+static ESPNow_Send_Event* espnow_send_event_acquire_c2d(int dest_drone_idx, EPacket_Type type, size_t packet_size, EPacket_Flags flags)
 {
     ASSERT(s_drone_infos[dest_drone_idx].occupied);
 
@@ -384,6 +390,23 @@ static ESPNow_Send_Event* espnow_send_event_acquire_from_drone_idx(int dest_dron
                                                                     EVENT_RINGBUF_ACQUIRE_TICKS_TO_WAIT_FOR_MAIN_TASK);
     if (e_send_event) {
         e_send_event->epkt.header = espnow_header_create(type, packet_size, flags);
+    }
+
+    return e_send_event;
+}
+
+static ESPNow_Send_Event* espnow_send_event_acquire_m2d(int dest_drone_idx, const SPacket* src_master_spkt, EPacket_Type type, size_t packet_size, EPacket_Flags flags)
+{
+    ASSERT(s_drone_infos[dest_drone_idx].occupied);
+
+    ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_raw(s_drone_infos[dest_drone_idx].mac_addr,
+                                                                    packet_size,
+                                                                    EVENT_RINGBUF_ACQUIRE_TICKS_TO_WAIT_FOR_MAIN_TASK);
+    if (e_send_event) {
+        e_send_event->epkt.header = espnow_header_create(type, packet_size, flags);
+        e_send_event->send_simple_response_to_master = true;
+        e_send_event->origin_serial_packet_id = src_master_spkt->header.packet_id;
+        e_send_event->origin_serial_packet_type = src_master_spkt->header.type;
     }
 
     return e_send_event;
@@ -470,40 +493,18 @@ static void serial_send_msg_to_master(const char* format, ...)
     usb_serial_jtag_write_bytes(spkt_log, packet_size, USB_SERIAL_WRITE_LOG_MAX_TICKS_TO_WAIT);
 }
 
-static void queue_c2m_drone_connection_update_for_send(int drone_idx, uint8_t update)
+static void queue_c2m_simple_response_for_send(SPacket_ID m2c_pkt_id, SPacket_Type m2c_pkt_type, uint8_t response)
 {
-    if (drone_idx < 0) {
-        return;
-    }
-
-    Serial_Send_Event* s_send_event = serial_send_event_acquire(SPKT_C2M_DRONE_CONNECTION_UPDATE,
-                                                                sizeof(SPacket_C2M_Drone_Connection_Update));
+    Serial_Send_Event* s_send_event = serial_send_event_acquire(SPKT_C2M_SIMPLE_RESPONSE,
+                                                                sizeof(SPacket_C2M_Simple_Response));
     if (!s_send_event) {
         return;
     }
 
-    SPacket_C2M_Drone_Connection_Update* spkt_conn_update = (SPacket_C2M_Drone_Connection_Update*) &s_send_event->spkt;
-    spkt_conn_update->update = update;
-    memcpy(spkt_conn_update->drone_name, s_drone_infos[drone_idx].drone_name, MAX_DRONE_NAME_LENGTH);
-
-    serial_send_event_complete(s_send_event);
-}
-
-static void queue_c2m_ping_drone_result_for_send(int drone_idx, uint8_t drone_responded)
-{
-    if (drone_idx < 0) {
-        return;
-    }
-
-    Serial_Send_Event* s_send_event = serial_send_event_acquire(SPKT_C2M_PING_DRONE_RESULT,
-                                                                sizeof(SPacket_C2M_Ping_Drone_Result));
-    if (!s_send_event) {
-        return;
-    }
-
-    SPacket_C2M_Ping_Drone_Result* spkt_ping_res = (SPacket_C2M_Ping_Drone_Result*) &s_send_event->spkt;
-    spkt_ping_res->drone_responded = drone_responded;
-    memcpy(spkt_ping_res->drone_name, s_drone_infos[drone_idx].drone_name, MAX_DRONE_NAME_LENGTH);
+    SPacket_C2M_Simple_Response* spkt_simple_response = (SPacket_C2M_Simple_Response*) &s_send_event->spkt;
+    spkt_simple_response->response = response;
+    spkt_simple_response->m2c_pkt_id = m2c_pkt_id;
+    spkt_simple_response->m2c_pkt_type = m2c_pkt_type;
 
     serial_send_event_complete(s_send_event);
 }
@@ -518,12 +519,14 @@ static void handle_espnow_packet_acknowledge(ESPNow_Send_Event* e_send_event)
         s_drone_infos[drone_idx].responding = true;
     }
 
+    uint8_t response_to_master = RESPONSE_FAIL;
+
     switch (epkt->header.type) {
     case EPKT_C2D_CONNECT:
         if (drone_idx >= 0 && !s_drone_infos[drone_idx].connected) {
             s_drone_infos[drone_idx].connected = true;
-            queue_c2m_drone_connection_update_for_send(drone_idx, DRONE_CONN_UPDATE_SUCCESSFULLY_CONNECTED);
         }
+        response_to_master = RESPONSE_SUCCESS;
         break;
 
     case EPKT_C2D_DISCONNECT:
@@ -535,28 +538,30 @@ static void handle_espnow_packet_acknowledge(ESPNow_Send_Event* e_send_event)
             }
 
             s_drone_infos[drone_idx].connected = false;
-            queue_c2m_drone_connection_update_for_send(drone_idx, DRONE_CONN_UPDATE_SUCCESSFULLY_DISCONNECTED);
         }
+        response_to_master = RESPONSE_SUCCESS;
         break;
 
     case EPKT_C2D_PING:
-        if (drone_idx >= 0) {
-            const EPacket_C2D_Ping* epkt_ping = (EPacket_C2D_Ping*) epkt;
-            if (epkt_ping->notify_master) {
-                queue_c2m_ping_drone_result_for_send(drone_idx, true);
-            }
-        }
+        response_to_master = RESPONSE_SUCCESS;
         break;
 
     case EPKT_C2D_DRONE_SETTINGS:
         if (drone_idx >= 0) {
             LOG_INFO("Updated settings on drone '%s'.", s_drone_infos[drone_idx].drone_name);
         }
+        response_to_master = RESPONSE_SUCCESS;
         break;
 
     default:
         LOG_DEBUG("Received acknowledge for ESP-Now Packet with unexpected type: '%u'", epkt->header.type);
         break;
+    }
+
+    if (e_send_event->send_simple_response_to_master) {
+        queue_c2m_simple_response_for_send(e_send_event->origin_serial_packet_id,
+                                           e_send_event->origin_serial_packet_type,
+                                           response_to_master);
     }
 
     release_unacknowledged_espnow_send_event(e_send_event);
@@ -572,28 +577,25 @@ static void handle_espnow_packet_failed_acknowledge(ESPNow_Send_Event* e_send_ev
         s_drone_infos[drone_idx].responding = false;
     }
 
+    uint8_t response_to_master = RESPONSE_FAIL;
+
     switch (epkt->header.type) {
     case EPKT_C2D_CONNECT:
-        queue_c2m_drone_connection_update_for_send(drone_idx, DRONE_CONN_UPDATE_FAILED_TO_CONNECT);
-        break;
-
     case EPKT_C2D_DISCONNECT:
-        queue_c2m_drone_connection_update_for_send(drone_idx, DRONE_CONN_UPDATE_FAILED_TO_DISCONNECT);
-        break;
-
     case EPKT_C2D_PING:
-        queue_c2m_ping_drone_result_for_send(drone_idx, false);
-        break;
-
     case EPKT_C2D_DRONE_SETTINGS:
-        if (drone_idx >= 0) {
-            LOG_ERROR("Failed to update settings on drone '%s'.", s_drone_infos[drone_idx].drone_name);
-        }
+        response_to_master = RESPONSE_FAIL;
         break;
 
     default:
         LOG_DEBUG("Acknowledge failed for ESP-Now Packet with unexpected type: '%u'", epkt->header.type);
         break;
+    }
+
+    if (e_send_event->send_simple_response_to_master) {
+        queue_c2m_simple_response_for_send(e_send_event->origin_serial_packet_id,
+                                           e_send_event->origin_serial_packet_type,
+                                           response_to_master);
     }
 
     release_unacknowledged_espnow_send_event(e_send_event);
@@ -753,6 +755,12 @@ static void serial_rx_process_buffer()
             continue;
         }
 
+        if (header.packet_id == 0) {
+            LOG_ERROR("serial_rx_process_buffer: Received serial packet with packet_id 0.");
+            serial_rx_drop_prefix(1);
+            continue;
+        }
+
         size_t packet_size = serial_packet_size(header);
         if (packet_size > SPKT_MAX_SIZE) {
             LOG_ERROR("serial_rx_process_buffer: Received oversized serial packet (%u bytes).", (unsigned) packet_size);
@@ -838,10 +846,10 @@ static void handle_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_eve
     if (epkt->header.flags & EPKT_FLAG_REQUIRE_ACK) {
         int drone_idx = get_drone_idx_from_mac_addr(e_recv_event->mac_addr);
         if (drone_idx >= 0) {
-            ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_from_drone_idx(drone_idx,
-                                                                                       EPKT_C2D_ACK_RECEIVE,
-                                                                                       sizeof(EPacket_C2D_Ack_Receive),
-                                                                                       0);
+            ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_c2d(drone_idx,
+                                                                            EPKT_C2D_ACK_RECEIVE,
+                                                                            sizeof(EPacket_C2D_Ack_Receive),
+                                                                            0);
             if (e_send_event) {
                 EPacket_C2D_Ack_Receive* epkt_c2d_ack = (EPacket_C2D_Ack_Receive*) &e_send_event->epkt;
                 epkt_c2d_ack->acknowledged_packet_id = epkt->header.packet_id;
@@ -889,16 +897,16 @@ static void handle_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_eve
         }
 
         if (drone_already_indexed) {
+            // If the drone sends an advertisement even though its connected, then the drone was probably restarted
+            // and lost the information about the connection, so we should just try to reconnect.
             if (s_drone_infos[drone_idx].connected) {
-                ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_from_drone_idx(drone_idx,
-                                                                                           EPKT_C2D_CONNECT,
-                                                                                           sizeof(EPacket_C2D_Connect),
-                                                                                           EPKT_FLAG_REQUIRE_ACK);
+                ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_c2d(drone_idx, EPKT_C2D_CONNECT, sizeof(EPacket_C2D_Connect), EPKT_FLAG_REQUIRE_ACK);
                 if (e_send_event) {
                     espnow_send_event_complete(e_send_event);
                 }
             }
-        } else {
+        }
+        else {
             if (first_empty_idx < 0) {
                 LOG_ERROR("Failed to index Drone after advertisement, because all (%d) drone slots are full.", MAX_DRONES);
                 break;
@@ -917,6 +925,7 @@ static void handle_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_eve
             s_drone_infos[first_empty_idx].connected = false;
             s_drone_infos[first_empty_idx].responding = false;
         }
+        
     } break;
 
     case EPKT_D2C_ACK_RECEIVE:
@@ -937,11 +946,8 @@ static void handle_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_eve
         EPacket_D2C_Log* epkt_d2c_log = (EPacket_D2C_Log*) epkt;
         int drone_idx = get_drone_idx_from_mac_addr(e_recv_event->mac_addr);
         if (drone_idx >= 0) {
-            serial_send_msg_to_master("%.*s: %.*s",
-                                      MAX_DRONE_NAME_LENGTH,
-                                      s_drone_infos[drone_idx].drone_name,
-                                      epkt_d2c_log->header.payload_size,
-                                      epkt_d2c_log->msg);
+            serial_send_msg_to_master("%.*s: %.*s", MAX_DRONE_NAME_LENGTH, s_drone_infos[drone_idx].drone_name,
+                                      epkt_d2c_log->header.payload_size, epkt_d2c_log->msg);
         }
     } break;
 
@@ -1002,12 +1008,13 @@ static void handle_incoming_serial_packet(const SPacket* spkt)
 
         int drone_idx = get_drone_idx_from_drone_name(spkt_m2c_connect->drone_name);
         if (drone_idx < 0) {
+            queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_FAIL);
             break;
         }
 
         if (s_drone_infos[drone_idx].connected) {
             LOG_DEBUG("Can't 'connect' to drone, because its already connected.");
-            queue_c2m_drone_connection_update_for_send(drone_idx, DRONE_CONN_UPDATE_SUCCESSFULLY_CONNECTED);
+            queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_SUCCESS);
             break;
         }
 
@@ -1019,17 +1026,17 @@ static void handle_incoming_serial_packet(const SPacket* spkt)
         esp_err_t ret = esp_now_add_peer(&peer);
         if (ret != ESP_OK && ret != ESP_ERR_ESPNOW_EXIST) {
             LOG_ERROR("handle_incoming_serial_packet: Failed to add Drone to peer list, ESP_ERR: %s", esp_err_to_name(ret));
-            queue_c2m_drone_connection_update_for_send(drone_idx, DRONE_CONN_UPDATE_FAILED_TO_CONNECT);
+            queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_FAIL);
             break;
         }
 
-        ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_from_drone_idx(drone_idx,
-                                                                                   EPKT_C2D_CONNECT,
-                                                                                   sizeof(EPacket_C2D_Connect),
-                                                                                   EPKT_FLAG_REQUIRE_ACK);
+        ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_m2d(drone_idx, spkt, EPKT_C2D_CONNECT, sizeof(EPacket_C2D_Connect), EPKT_FLAG_REQUIRE_ACK);
         if (e_send_event) {
             espnow_send_event_complete(e_send_event);
+        } else {
+            queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_FAIL);
         }
+        
     } break;
 
     case SPKT_M2C_DISCONNECT_FROM_DRONE:
@@ -1038,22 +1045,23 @@ static void handle_incoming_serial_packet(const SPacket* spkt)
 
         int drone_idx = get_drone_idx_from_drone_name(spkt_m2c_disconnect->drone_name);
         if (drone_idx < 0) {
+            queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_FAIL);
             break;
         }
 
         if (!s_drone_infos[drone_idx].connected) {
             LOG_DEBUG("Can't 'disconnect' from drone, because its already disconnected.");
-            queue_c2m_drone_connection_update_for_send(drone_idx, DRONE_CONN_UPDATE_SUCCESSFULLY_DISCONNECTED);
+            queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_SUCCESS);
             break;
         }
 
-        ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_from_drone_idx(drone_idx,
-                                                                                   EPKT_C2D_DISCONNECT,
-                                                                                   sizeof(EPacket_C2D_Disconnect),
-                                                                                   EPKT_FLAG_REQUIRE_ACK);
+        ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_m2d(drone_idx, spkt, EPKT_C2D_DISCONNECT, sizeof(EPacket_C2D_Disconnect), EPKT_FLAG_REQUIRE_ACK);
         if (e_send_event) {
             espnow_send_event_complete(e_send_event);
+        } else {
+            queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_FAIL);
         }
+        
     } break;
 
     case SPKT_M2C_CONTROLL_COMMANDS:
@@ -1070,15 +1078,16 @@ static void handle_incoming_serial_packet(const SPacket* spkt)
             break;
         }
 
-        ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_from_drone_idx(drone_idx,
-                                                                                   EPKT_C2D_CONTROLL_COMMANDS,
-                                                                                   sizeof(EPacket_C2D_Controll_Commands),
-                                                                                   0);
+        ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_c2d(drone_idx,
+                                                                        EPKT_C2D_CONTROLL_COMMANDS,
+                                                                        sizeof(EPacket_C2D_Controll_Commands),
+                                                                        0);
         if (e_send_event) {
             EPacket_C2D_Controll_Commands* epkt_c2d_ctrl_cmds = (EPacket_C2D_Controll_Commands*) &e_send_event->epkt;
             memcpy(&epkt_c2d_ctrl_cmds->ctrl_cmds, &spkt_m2c_ctrl_cmds->ctrl_cmds, sizeof(Payload_Controll_Commands));
             espnow_send_event_complete(e_send_event);
         }
+        
     } break;
 
     case SPKT_M2C_GET_DRONE_INFOS:
@@ -1125,24 +1134,23 @@ static void handle_incoming_serial_packet(const SPacket* spkt)
 
         int drone_idx = get_drone_idx_from_drone_name(spkt_m2c_ping->drone_name);
         if (drone_idx < 0) {
+            queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_FAIL);
             break;
         }
 
         if (!s_drone_infos[drone_idx].connected) {
             LOG_ERROR("Can't ping drone because the drone is not connected.");
-            queue_c2m_ping_drone_result_for_send(drone_idx, false);
+            queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_FAIL);
             break;
         }
 
-        ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_from_drone_idx(drone_idx,
-                                                                                   EPKT_C2D_PING,
-                                                                                   sizeof(EPacket_C2D_Ping),
-                                                                                   EPKT_FLAG_REQUIRE_ACK);
+        ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_m2d(drone_idx, spkt, EPKT_C2D_PING, sizeof(EPacket_C2D_Ping), EPKT_FLAG_REQUIRE_ACK);
         if (e_send_event) {
-            EPacket_C2D_Ping* epkt_ping = (EPacket_C2D_Ping*) &e_send_event->epkt;
-            epkt_ping->notify_master = true;
             espnow_send_event_complete(e_send_event);
+        } else {
+            queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_FAIL);
         }
+        
     } break;
 
     case SPKT_M2C_RESTART_DRONE:
@@ -1151,21 +1159,23 @@ static void handle_incoming_serial_packet(const SPacket* spkt)
 
         int drone_idx = get_drone_idx_from_drone_name(spkt_m2c_restart->drone_name);
         if (drone_idx < 0) {
+            queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_FAIL);
             break;
         }
 
         if (!s_drone_infos[drone_idx].connected) {
             LOG_ERROR("Can't restart drone because the drone is not connected.");
+            queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_FAIL);
             break;
         }
 
-        ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_from_drone_idx(drone_idx,
-                                                                                   EPKT_C2D_RESTART,
-                                                                                   sizeof(EPacket_C2D_Restart),
-                                                                                   EPKT_FLAG_REQUIRE_ACK);
+        ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_m2d(drone_idx, spkt, EPKT_C2D_RESTART, sizeof(EPacket_C2D_Restart), 0);
         if (e_send_event) {
             espnow_send_event_complete(e_send_event);
+        } else {
+            queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_FAIL);
         }
+        
     } break;
 
     case SPKT_M2C_DRONE_SETTINGS:
@@ -1174,23 +1184,25 @@ static void handle_incoming_serial_packet(const SPacket* spkt)
 
         int drone_idx = get_drone_idx_from_drone_name(spkt_m2c_settings->drone_name);
         if (drone_idx < 0) {
+            queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_FAIL);
             break;
         }
 
         if (!s_drone_infos[drone_idx].connected) {
             LOG_ERROR("Can't send drone settings because the drone is not connected.");
+            queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_FAIL);
             break;
         }
 
-        ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_from_drone_idx(drone_idx,
-                                                                                   EPKT_C2D_DRONE_SETTINGS,
-                                                                                   sizeof(EPacket_C2D_Drone_Settings),
-                                                                                   EPKT_FLAG_REQUIRE_ACK);
+        ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_m2d(drone_idx, spkt, EPKT_C2D_DRONE_SETTINGS, sizeof(EPacket_C2D_Drone_Settings), EPKT_FLAG_REQUIRE_ACK);
         if (e_send_event) {
             EPacket_C2D_Drone_Settings* epkt_c2d_settings = (EPacket_C2D_Drone_Settings*) &e_send_event->epkt;
             memcpy(&epkt_c2d_settings->settings, &spkt_m2c_settings->settings, sizeof(Payload_Drone_Settings));
             espnow_send_event_complete(e_send_event);
+        } else {
+            queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_FAIL);
         }
+        
     } break;
 
     default:
@@ -1206,13 +1218,8 @@ static void handle_ping_connected_drones_event()
             continue;
         }
 
-        ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_from_drone_idx(drone_idx,
-                                                                                   EPKT_C2D_PING,
-                                                                                   sizeof(EPacket_C2D_Ping),
-                                                                                   EPKT_FLAG_REQUIRE_ACK);
+        ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_c2d(drone_idx, EPKT_C2D_PING, sizeof(EPacket_C2D_Ping), EPKT_FLAG_REQUIRE_ACK);
         if (e_send_event) {
-            EPacket_C2D_Ping* epkt_ping = (EPacket_C2D_Ping*) &e_send_event->epkt;
-            epkt_ping->notify_master = false;
             espnow_send_event_complete(e_send_event);
         }
     }

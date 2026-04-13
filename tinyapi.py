@@ -53,6 +53,8 @@ def read_packet():
         raise CorruptPacketError(f"Payload size is negative: {header.payload_size}")
     if header.payload_size > SPKT_MAX_SIZE - HEADER_SIZE:
         raise CorruptPacketError(f"Payload size is larger than the maximum size: {header.payload_size}")
+    if header.packet_id == 0:
+        raise CorruptPacketError("Packet id is 0")
         
     packet_bytes = header_bytes + serialport.read(header.payload_size)
     if len(packet_bytes) != HEADER_SIZE + header.payload_size:
@@ -83,18 +85,33 @@ def read_all_packets():
     return packets
 
     
-def expect_specific_packet(pkt_type: int, timeout_s: float):
+def expect_packet_with_type(pkt_type: int, timeout_s: float):
     """Reads packets until a specific packet is read, or the timeout `timeout_s` is reached"""
-    packet = read_packet()
     time_begin_s = time.time()
-    while packet.pkt_type != pkt_type:
+    while True:
+        packet = read_packet()
+        if packet.pkt_type == pkt_type:
+            return packet
         if (time.time() - time_begin_s > timeout_s):
             raise TimeoutError(f"Waiting for the packet of type '{pkt_type}' timed out...")
+
+
+def expect_simple_response(packet_id: int, timeout_s: float):
+    """Reads packets until a specific packet is read, or the timeout `timeout_s` is reached"""
+    time_begin_s = time.time()
+    while True:
         packet = read_packet()
+        if packet.pkt_type == SPKT_C2M_SIMPLE_RESPONSE and packet.m2c_pkt_id == packet_id:
+            return packet
+        if (time.time() - time_begin_s > timeout_s):
+            raise TimeoutError(f"Waiting for a response for the packet with id '{packet_id}' timed out...")
         
-    return packet
 
+def get_packet_id(data: bytes) -> int:
+    header = unpack_header(data[:HEADER_SIZE])
+    return header.packet_id
 
+        
 def write_packet(data: bytes):
     """Sends a packet to the controller. Use 'pack_m2c_*' functions from 'serial_packets.py'
     to create a bytes object representing the specific packet."""
@@ -102,14 +119,14 @@ def write_packet(data: bytes):
     serialport.flush()
     if bytes_written != len(data):
         raise RuntimeError(f"Failed to write all bytes: {bytes_written} of {len(data)}")
-
+    
 
 def list_drones():
     """Prints a list of all drones that were detected by the controller and
     whether they are connected and responding."""
     read_all_packets() # exhaust the serialport receive buffer
     write_packet(pack_m2c_get_drone_infos())
-    packet = expect_specific_packet(SPKT_C2M_DRONE_INFOS, 3)
+    packet = expect_packet_with_type(SPKT_C2M_DRONE_INFOS, 3)
     for drone_info in packet.drone_infos:
         is_connected  = drone_info.flags & DRONE_INFO_FLAG_IS_CONNETED
         is_responding = drone_info.flags & DRONE_INFO_FLAG_IS_RESPONDING
@@ -122,27 +139,29 @@ def list_drones():
 def connect(drone_name: str):
     """Ask the controller to connect to a specific drone."""
     read_all_packets()
-    write_packet(pack_m2c_connect_to_drone(drone_name))
-    packet = expect_specific_packet(SPKT_C2M_DRONE_CONNECTION_UPDATE, 3)
-    if packet.update == DRONE_CONN_UPDATE_SUCCESSFULLY_CONNECTED:
-        print(f"Connected to drone '{packet.drone_name}'")
-    elif packet.update == DRONE_CONN_UPDATE_FAILED_TO_CONNECT:
+    m2c_packet = pack_m2c_connect_to_drone(drone_name)
+    write_packet(m2c_packet)
+    c2m_response = expect_simple_response(get_packet_id(m2c_packet), 3)
+    if c2m_response.response == RESPONSE_SUCCESS:
+        print(f"Connected to drone '{drone_name}'")
+    elif c2m_response.response == RESPONSE_FAIL:
         print(f"Failed to connect to drone '{drone_name}'")
     else:
-        raise CorruptPacketError(f"Unexpected update '{packet.update}'")
+        raise CorruptPacketError(f"Unexpected response '{c2m_response.response}'")
 
 
 def disconnect(drone_name: str):
     """Ask the controller to disconnect from a specific drone."""
     read_all_packets()
-    write_packet(pack_m2c_disconnect_from_drone(drone_name))
-    packet = expect_specific_packet(SPKT_C2M_DRONE_CONNECTION_UPDATE, 3)
-    if packet.update == DRONE_CONN_UPDATE_SUCCESSFULLY_DISCONNECTED:
-        print(f"Disconnected from drone '{packet.drone_name}'")
-    elif packet.update == DRONE_CONN_UPDATE_FAILED_TO_DISCONNECT:
+    m2c_packet = pack_m2c_disconnect_from_drone(drone_name)
+    write_packet(m2c_packet)
+    c2m_response = expect_simple_response(get_packet_id(m2c_packet), 3)
+    if c2m_response.response == RESPONSE_SUCCESS:
+        print(f"Disconnected from drone '{drone_name}'")
+    elif c2m_response.response == RESPONSE_FAIL:
         print(f"Failed to disconnect from drone '{drone_name}'")
     else:
-        raise CorruptPacketError(f"Unexpected update '{packet.update}'")
+        raise CorruptPacketError(f"Unexpected response '{c2m_response.response}'")
 
 
 def arm(drone_name: str):
@@ -163,12 +182,15 @@ def disarm(drone_name: str):
 def ping(drone_name: str):
     """Sends a ping packet to a drone, which promts the drone to acknowledge the ping.
     If the controller receives the acknowledge the ping was successful."""
-    write_packet(pack_m2c_ping_drone(drone_name))
-    packet = expect_specific_packet(SPKT_C2M_PING_DRONE_RESULT, 3)
-    if packet.drone_responded == True:
-        print(f"Drone '{packet.drone_name}' responded")
+    m2c_packet = pack_m2c_ping_drone(drone_name)
+    write_packet(m2c_packet)
+    c2m_response = expect_simple_response(get_packet_id(m2c_packet), 3)
+    if c2m_response.response == RESPONSE_SUCCESS:
+        print(f"Drone '{drone_name}' responded")
+    elif c2m_response.response == RESPONSE_FAIL:
+        print(f"Drone '{drone_name}' did not respond")
     else:
-        print(f"Drone '{packet.drone_name}' did not respond")
+        raise CorruptPacketError(f"Unexpected response '{c2m_response.response}'")
 
 
 def range_test(drone_name: str):
@@ -176,11 +198,12 @@ def range_test(drone_name: str):
     Stop with Ctrl-C."""
     try:
         while True:
-            write_packet(pack_m2c_ping_drone(drone_name))
+            m2c_packet = pack_m2c_ping_drone(drone_name)
+            write_packet(m2c_packet)
             responded = False
             try:
-                packet = expect_specific_packet(SPKT_C2M_PING_DRONE_RESULT, 1)
-                responded = packet.drone_responded
+                c2m_response = expect_simple_response(get_packet_id(m2c_packet), 1)
+                responded = (c2m_response.response == RESPONSE_SUCCESS)
             except TimeoutError:
                 responded = False
             sys.stdout.write("\r\033[K")
@@ -203,10 +226,18 @@ def set_drone_settings(drone_name: str,
                        pitch_p: float, pitch_i: float, pitch_d: float,
                        yaw_p: float, yaw_i: float, yaw_d: float):
     """Send PID settings for roll, pitch, and yaw to a drone."""
-    write_packet(pack_m2c_drone_settings(drone_name,
+    m2c_packet = pack_m2c_drone_settings(drone_name,
                                          roll_p, roll_i, roll_d,
                                          pitch_p, pitch_i, pitch_d,
-                                         yaw_p, yaw_i, yaw_d))
+                                         yaw_p, yaw_i, yaw_d)
+    write_packet(m2c_packet)
+    c2m_response = expect_simple_response(get_packet_id(m2c_packet), 3)
+    if c2m_response.response == RESPONSE_SUCCESS:
+        print(f"Updated settings on drone '{drone_name}'")
+    elif c2m_response.response == RESPONSE_FAIL:
+        print(f"Failed to update settings on drone '{drone_name}'")
+    else:
+        raise CorruptPacketError(f"Unexpected response '{c2m_response.response}'")        
 
 
 def monitor():

@@ -18,12 +18,11 @@ enum {
     SPKT_M2C_RESTART_DRONE = 69,          // Master requests to restart a specific Drone
     SPKT_M2C_DRONE_SETTINGS = 70,         // Master sends settings for a specific Drone to the Controller
 
-    SPKT_C2M_DRONE_CONNECTION_UPDATE = 96, // Controller notifies the Master about a successful connection to the Drone
-    SPKT_C2M_DRONE_INFOS = 97,             // Controller sends the requested basic infos about available Drones to the Master
-    SPKT_C2M_DRONE_IMU_DATA = 98,          // Controller sends IMU data of a Drone to the Master
-    SPKT_C2M_DRONE_TELEMETRY = 99,         // Controller sends telemetry data of a Drone to the Master
+    SPKT_C2M_SIMPLE_RESPONSE = 96,    // Controller sends a success/fail response for a M2C packet like SPKT_M2C_CONNECT_TO_DRONE
+    SPKT_C2M_DRONE_INFOS = 97,        // Controller sends the requested basic infos about available Drones to the Master
+    SPKT_C2M_DRONE_IMU_DATA = 98,     // Controller sends IMU data of a Drone to the Master
+    SPKT_C2M_DRONE_TELEMETRY = 99,    // Controller sends telemetry data of a Drone to the Master
     SPKT_C2M_LOG = 100,
-    SPKT_C2M_PING_DRONE_RESULT = 101,      // Controller notifies Master if the Ping-Pong response test was successful or not
 };
 typedef uint8_t SPacket_Type;
 
@@ -32,12 +31,15 @@ typedef uint8_t SPacket_Type;
 typedef uint32_t Serial_Delimiter;
 #define SERIAL_DELIMITER ((Serial_Delimiter) 0xB62A429F) // randomly generated
 
+typedef uint32_t SPacket_ID;
+
 #define PACKED __attribute__((packed))
 
 typedef struct {
     Serial_Delimiter delim;     // Delimiter is in front of the Serial Packet
     SPacket_Type type;          // The packet type
     int16_t payload_size;       // payload_size = packet_size - sizeof(SHeader)
+    SPacket_ID packet_id;
 } PACKED SHeader;
 
 // "Base Class" Serial Packet
@@ -93,17 +95,16 @@ typedef struct {
 
 
 enum {
-    DRONE_CONN_UPDATE_SUCCESSFULLY_CONNECTED      = 0,
-    DRONE_CONN_UPDATE_FAILED_TO_CONNECT           = 1,
-    DRONE_CONN_UPDATE_SUCCESSFULLY_DISCONNECTED   = 2,
-    DRONE_CONN_UPDATE_FAILED_TO_DISCONNECT        = 3,
+    RESPONSE_SUCCESS = 0,
+    RESPONSE_FAIL = 1,
 };
 
 typedef struct {
-    SHeader header;             // type == SPKT_C2M_DRONE_CONNECTION_UPDATE
-    uint8_t update;
-    char drone_name[MAX_DRONE_NAME_LENGTH];
-} PACKED SPacket_C2M_Drone_Connection_Update;
+    SHeader header;             // type == SPKT_C2M_SIMPLE_RESPONSE
+    uint8_t response;
+    SPacket_ID m2c_pkt_id;      // id of the packet which this packet responds to
+    SPacket_Type m2c_pkt_type;  // type of the packet which this packet responds to
+} PACKED SPacket_C2M_Simple_Response;
 
 typedef struct {
     SHeader header;             // type == SPKT_C2M_DRONE_INFOS
@@ -127,12 +128,6 @@ typedef struct {
     SHeader header;             // type == SPKT_C2M_LOG
     char msg[0];                // msg_length = header.payload_size
 } PACKED SPacket_C2M_Log;
-
-typedef struct {
-    SHeader header;             // type == SPKT_C2M_PING_DRONE_RESULT
-    uint8_t drone_responded;    // 0 - false, 1 - true
-    char drone_name[MAX_DRONE_NAME_LENGTH];
-} PACKED SPacket_C2M_Ping_Drone_Result;
 
 
 #undef PACKED

@@ -108,7 +108,6 @@ typedef struct {
 
 typedef struct {
     EHeader header;             // type == EPKT_C2D_PING, flags = EPKT_FLAG_REQUIRE_ACK
-    uint8_t notify_master;      // notifies master about ping success/fail if set to 1
 } PACKED EPacket_C2D_Ping;
 
 typedef struct {
