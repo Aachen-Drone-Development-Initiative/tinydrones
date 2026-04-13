@@ -470,7 +470,7 @@ static void serial_send_msg_to_master(const char* format, ...)
     usb_serial_jtag_write_bytes(spkt_log, packet_size, USB_SERIAL_WRITE_LOG_MAX_TICKS_TO_WAIT);
 }
 
-static void send_c2m_drone_connection_update(int drone_idx, uint8_t update)
+static void queue_c2m_drone_connection_update_for_send(int drone_idx, uint8_t update)
 {
     if (drone_idx < 0) {
         return;
@@ -489,7 +489,7 @@ static void send_c2m_drone_connection_update(int drone_idx, uint8_t update)
     serial_send_event_complete(s_send_event);
 }
 
-static void send_c2m_ping_drone_result(int drone_idx, uint8_t drone_responded)
+static void queue_c2m_ping_drone_result_for_send(int drone_idx, uint8_t drone_responded)
 {
     if (drone_idx < 0) {
         return;
@@ -522,7 +522,7 @@ static void handle_espnow_packet_acknowledge(ESPNow_Send_Event* e_send_event)
     case EPKT_C2D_CONNECT:
         if (drone_idx >= 0 && !s_drone_infos[drone_idx].connected) {
             s_drone_infos[drone_idx].connected = true;
-            send_c2m_drone_connection_update(drone_idx, DRONE_CONN_UPDATE_SUCCESSFULLY_CONNECTED);
+            queue_c2m_drone_connection_update_for_send(drone_idx, DRONE_CONN_UPDATE_SUCCESSFULLY_CONNECTED);
         }
         break;
 
@@ -535,7 +535,7 @@ static void handle_espnow_packet_acknowledge(ESPNow_Send_Event* e_send_event)
             }
 
             s_drone_infos[drone_idx].connected = false;
-            send_c2m_drone_connection_update(drone_idx, DRONE_CONN_UPDATE_SUCCESSFULLY_DISCONNECTED);
+            queue_c2m_drone_connection_update_for_send(drone_idx, DRONE_CONN_UPDATE_SUCCESSFULLY_DISCONNECTED);
         }
         break;
 
@@ -543,7 +543,7 @@ static void handle_espnow_packet_acknowledge(ESPNow_Send_Event* e_send_event)
         if (drone_idx >= 0) {
             const EPacket_C2D_Ping* epkt_ping = (EPacket_C2D_Ping*) epkt;
             if (epkt_ping->notify_master) {
-                send_c2m_ping_drone_result(drone_idx, true);
+                queue_c2m_ping_drone_result_for_send(drone_idx, true);
             }
         }
         break;
@@ -574,15 +574,15 @@ static void handle_espnow_packet_failed_acknowledge(ESPNow_Send_Event* e_send_ev
 
     switch (epkt->header.type) {
     case EPKT_C2D_CONNECT:
-        send_c2m_drone_connection_update(drone_idx, DRONE_CONN_UPDATE_FAILED_TO_CONNECT);
+        queue_c2m_drone_connection_update_for_send(drone_idx, DRONE_CONN_UPDATE_FAILED_TO_CONNECT);
         break;
 
     case EPKT_C2D_DISCONNECT:
-        send_c2m_drone_connection_update(drone_idx, DRONE_CONN_UPDATE_FAILED_TO_DISCONNECT);
+        queue_c2m_drone_connection_update_for_send(drone_idx, DRONE_CONN_UPDATE_FAILED_TO_DISCONNECT);
         break;
 
     case EPKT_C2D_PING:
-        send_c2m_ping_drone_result(drone_idx, false);
+        queue_c2m_ping_drone_result_for_send(drone_idx, false);
         break;
 
     case EPKT_C2D_DRONE_SETTINGS:
@@ -1007,7 +1007,7 @@ static void handle_incoming_serial_packet(const SPacket* spkt)
 
         if (s_drone_infos[drone_idx].connected) {
             LOG_DEBUG("Can't 'connect' to drone, because its already connected.");
-            send_c2m_drone_connection_update(drone_idx, DRONE_CONN_UPDATE_SUCCESSFULLY_CONNECTED);
+            queue_c2m_drone_connection_update_for_send(drone_idx, DRONE_CONN_UPDATE_SUCCESSFULLY_CONNECTED);
             break;
         }
 
@@ -1019,7 +1019,7 @@ static void handle_incoming_serial_packet(const SPacket* spkt)
         esp_err_t ret = esp_now_add_peer(&peer);
         if (ret != ESP_OK && ret != ESP_ERR_ESPNOW_EXIST) {
             LOG_ERROR("handle_incoming_serial_packet: Failed to add Drone to peer list, ESP_ERR: %s", esp_err_to_name(ret));
-            send_c2m_drone_connection_update(drone_idx, DRONE_CONN_UPDATE_FAILED_TO_CONNECT);
+            queue_c2m_drone_connection_update_for_send(drone_idx, DRONE_CONN_UPDATE_FAILED_TO_CONNECT);
             break;
         }
 
@@ -1043,7 +1043,7 @@ static void handle_incoming_serial_packet(const SPacket* spkt)
 
         if (!s_drone_infos[drone_idx].connected) {
             LOG_DEBUG("Can't 'disconnect' from drone, because its already disconnected.");
-            send_c2m_drone_connection_update(drone_idx, DRONE_CONN_UPDATE_SUCCESSFULLY_DISCONNECTED);
+            queue_c2m_drone_connection_update_for_send(drone_idx, DRONE_CONN_UPDATE_SUCCESSFULLY_DISCONNECTED);
             break;
         }
 
@@ -1130,7 +1130,7 @@ static void handle_incoming_serial_packet(const SPacket* spkt)
 
         if (!s_drone_infos[drone_idx].connected) {
             LOG_ERROR("Can't ping drone because the drone is not connected.");
-            send_c2m_ping_drone_result(drone_idx, false);
+            queue_c2m_ping_drone_result_for_send(drone_idx, false);
             break;
         }
 
