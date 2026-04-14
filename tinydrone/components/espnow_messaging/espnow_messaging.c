@@ -50,7 +50,7 @@ const int espnow_wait_for_ack_resend_timeouts_ms[] = {20, 40, 80, 160, 320};
 static const uint8_t broadcast_mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
 // TODO: This should not be hardcoded obviously
-static const char drone_name[MAX_DRONE_NAME_LENGTH] = "tiny1";
+static const char drone_name[DRONE_NAME_LENGTH] = "tiny1";
 
 typedef enum {
     ESPNOW_RECEIVE_EVENT = 0,
@@ -89,7 +89,7 @@ typedef struct {
     atomic_int pitch;
     atomic_int yaw;
     atomic_int roll;
-    atomic_int throttle;
+    atomic_int thrust;
     atomic_int flags;
 } Controller_Info;
 
@@ -173,21 +173,21 @@ static bool is_controller_offline()
 static Payload_Controll_Commands get_control_commands()
 {
     return (Payload_Controll_Commands) {
-        .pitch    = atomic_load(&s_controller.pitch),
-        .yaw      = atomic_load(&s_controller.yaw),
-        .roll     = atomic_load(&s_controller.roll),
-        .throttle = atomic_load(&s_controller.throttle),
-        .flags    = atomic_load(&s_controller.flags),
+        .pitch  = atomic_load(&s_controller.pitch),
+        .yaw    = atomic_load(&s_controller.yaw),
+        .roll   = atomic_load(&s_controller.roll),
+        .thrust = atomic_load(&s_controller.thrust),
+        .flags  = atomic_load(&s_controller.flags),
     };
 }
 
 static void set_control_commands(Payload_Controll_Commands ctrl_cmds)
 {
-    atomic_store(&s_controller.pitch,    ctrl_cmds.pitch);
-    atomic_store(&s_controller.yaw,      ctrl_cmds.yaw);
-    atomic_store(&s_controller.roll,     ctrl_cmds.roll);
-    atomic_store(&s_controller.throttle, ctrl_cmds.throttle);
-    atomic_store(&s_controller.flags,    ctrl_cmds.flags);
+    atomic_store(&s_controller.pitch,  ctrl_cmds.pitch);
+    atomic_store(&s_controller.yaw,    ctrl_cmds.yaw);
+    atomic_store(&s_controller.roll,   ctrl_cmds.roll);
+    atomic_store(&s_controller.thrust, ctrl_cmds.thrust);
+    atomic_store(&s_controller.flags,  ctrl_cmds.flags);
 }
 
 static void espnow_send_callback(const esp_now_send_info_t *tx_info, esp_now_send_status_t status)
@@ -289,7 +289,7 @@ static void queue_advertisement_packet_for_send(void* arg)
     ESPNow_Send_Event* e_send_event = espnow_send_event_acquire(broadcast_mac, EPKT_D2C_ADVERTISE, sizeof(EPacket_D2C_Advertise), 0);
     if (e_send_event) {
         EPacket_D2C_Advertise* epkt_d2c_ad = (EPacket_D2C_Advertise*) &e_send_event->epkt;
-        memcpy(epkt_d2c_ad->drone_name, drone_name, MAX_DRONE_NAME_LENGTH);
+        memcpy(epkt_d2c_ad->drone_name, drone_name, DRONE_NAME_LENGTH);
         espnow_send_event_complete(e_send_event);
     }
 }
@@ -766,9 +766,9 @@ Espnow_Messaging_Ret espnow_send_msg_to_controller(const char* format, ...)
     // We dont use 'espnow_send_event_acquire/complete', but instead use a
     // statically allocated buffer and send the packet immediately.
     static char pkt_buffer[EPKT_MAX_SIZE];
-    EPacket_D2C_Log* epkt_log = (EPacket_D2C_Log*) &pkt_buffer;
+    EPacket_D2C_Msg* epkt_log = (EPacket_D2C_Msg*) &pkt_buffer;
 
-    int max_log_msg_size = EPKT_MAX_SIZE - sizeof(EPacket_D2C_Log);
+    int max_log_msg_size = EPKT_MAX_SIZE - sizeof(EPacket_D2C_Msg);
 
     va_start(args, format);
     int log_msg_size = vsnprintf(epkt_log->msg, max_log_msg_size, format, args) + 1; // + 1 because '\0' is not counted
@@ -778,8 +778,8 @@ Espnow_Messaging_Ret espnow_send_msg_to_controller(const char* format, ...)
         log_msg_size = max_log_msg_size;
     }
 
-    size_t packet_size = sizeof(EPacket_D2C_Log) + log_msg_size;
-    epkt_log->header = espnow_header_create(EPKT_D2C_LOG, packet_size, 0);
+    size_t packet_size = sizeof(EPacket_D2C_Msg) + log_msg_size;
+    epkt_log->header = espnow_header_create(EPKT_D2C_MSG, packet_size, 0);
 
     esp_err_t ret = esp_now_send(s_controller.mac_addr, (uint8_t*) epkt_log, packet_size);
     if (ret != ESP_OK) {

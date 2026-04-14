@@ -64,7 +64,7 @@ def read_packet():
     all_packets.append(packet)
 
     # Always print error messages from the controller
-    if packet.pkt_type == SPKT_C2M_LOG:
+    if packet.pkt_type == SPKT_C2M_MSG:
         if packet.msg.startswith("ERROR") or packet.msg.startswith("INFO"):
             print(packet.msg.rstrip("\n\0"))
 
@@ -101,7 +101,7 @@ def expect_simple_response(packet_id: int, timeout_s: float):
     time_begin_s = time.time()
     while True:
         packet = read_packet()
-        if packet.pkt_type == SPKT_C2M_SIMPLE_RESPONSE and packet.m2c_pkt_id == packet_id:
+        if packet.pkt_type == SPKT_C2M_SIMPLE_RESPONSE and packet.request_pkt_id == packet_id:
             return packet
         if (time.time() - time_begin_s > timeout_s):
             raise TimeoutError(f"Waiting for a response for the packet with id '{packet_id}' timed out...")
@@ -168,14 +168,14 @@ def arm(drone_name: str):
     """Send a controll-commands packet to a drone where just the
     CTRL_CMD_FLAG_IS_ARMED flag is set."""
     write_packet(pack_m2c_control_commands(drone_name,
-                                           pitch=0, yaw=0, roll=0, throttle=0,
+                                           pitch=0, yaw=0, roll=0, thrust=0,
                                            flags=CTRL_CMD_FLAG_IS_ARMED))
 
 
 def disarm(drone_name: str):
     """Send a zeroed out controll-commands packet to the drone (ie. do freeze)"""
     write_packet(pack_m2c_control_commands(drone_name,
-                                           pitch=0, yaw=0, roll=0, throttle=0,
+                                           pitch=0, yaw=0, roll=0, thrust=0,
                                            flags=0))
 
 
@@ -246,7 +246,7 @@ def monitor():
         while True:
             if serialport.inWaiting() > 0:
                 packet = read_packet()
-                if packet.pkt_type == SPKT_C2M_LOG:
+                if packet.pkt_type == SPKT_C2M_MSG:
                     print(packet.msg.rstrip("\n\0"))
                 else:
                     print(packet)

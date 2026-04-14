@@ -52,7 +52,6 @@ static const int s_espnow_wait_for_ack_resend_timeouts_ms[] = {20, 40, 80, 160, 
 static void serial_send_msg_to_master(const char* format, ...);
 
 #define LOG_ERROR(format, ...) serial_send_msg_to_master("ERROR (DONGLE): " format "\n", ##__VA_ARGS__)
-#define LOG_INFO(format, ...)  serial_send_msg_to_master("INFO (DONGLE): " format "\n", ##__VA_ARGS__)
 
 #define ENABLE_DEBUG_LOGS 1
 
@@ -120,7 +119,7 @@ typedef struct {
 typedef struct {
     bool occupied;
     uint8_t mac_addr[ESP_NOW_ETH_ALEN];
-    char drone_name[MAX_DRONE_NAME_LENGTH];
+    char drone_name[DRONE_NAME_LENGTH];
     bool connected;
     bool responding;
 } Drone_Info;
@@ -161,7 +160,7 @@ static int get_drone_idx_from_mac_addr(const uint8_t* mac_addr)
 static int search_drone_idx_from_drone_name(const char* drone_name)
 {
     for (int i = 0; i < MAX_DRONES; ++i) {
-        if (memcmp(s_drone_infos[i].drone_name, drone_name, MAX_DRONE_NAME_LENGTH) == 0) {
+        if (memcmp(s_drone_infos[i].drone_name, drone_name, DRONE_NAME_LENGTH) == 0) {
             return i;
         }
     }
@@ -173,7 +172,7 @@ static int get_drone_idx_from_drone_name(const char* drone_name)
 {
     int drone_idx = search_drone_idx_from_drone_name(drone_name);
     if (drone_idx < 0) {
-        LOG_ERROR("No drone available with name: '%.*s'.", MAX_DRONE_NAME_LENGTH, drone_name);
+        LOG_ERROR("No drone available with name: '%.*s'.", DRONE_NAME_LENGTH, drone_name);
     }
     
     return drone_idx;
@@ -480,20 +479,20 @@ static void serial_send_msg_to_master(const char* format, ...)
 {
     va_list args;
 
-    static char pkt_buffer[sizeof(SPacket_C2M_Log) + MAX_LOG_MSG_LENGTH];
-    SPacket_C2M_Log* spkt_log = (SPacket_C2M_Log*) &pkt_buffer;
+    static char pkt_buffer[sizeof(SPacket_C2M_Msg) + MAX_LOG_MSG_LENGTH];
+    SPacket_C2M_Msg* spkt_log = (SPacket_C2M_Msg*) &pkt_buffer;
 
     va_start(args, format);
     int log_msg_size = vsnprintf(spkt_log->msg, MAX_LOG_MSG_LENGTH, format, args) + 1;
     va_end(args);
 
-    size_t packet_size = sizeof(SPacket_C2M_Log) + log_msg_size;
-    spkt_log->header = serial_header_create(SPKT_C2M_LOG, packet_size);
+    size_t packet_size = sizeof(SPacket_C2M_Msg) + log_msg_size;
+    spkt_log->header = serial_header_create(SPKT_C2M_MSG, packet_size);
 
     usb_serial_jtag_write_bytes(spkt_log, packet_size, USB_SERIAL_WRITE_LOG_MAX_TICKS_TO_WAIT);
 }
 
-static void queue_c2m_simple_response_for_send(SPacket_ID m2c_pkt_id, SPacket_Type m2c_pkt_type, uint8_t response)
+static void queue_c2m_simple_response_for_send(SPacket_ID request_pkt_id, SPacket_Type request_pkt_type, uint8_t response)
 {
     Serial_Send_Event* s_send_event = serial_send_event_acquire(SPKT_C2M_SIMPLE_RESPONSE,
                                                                 sizeof(SPacket_C2M_Simple_Response));
@@ -503,8 +502,8 @@ static void queue_c2m_simple_response_for_send(SPacket_ID m2c_pkt_id, SPacket_Ty
 
     SPacket_C2M_Simple_Response* spkt_simple_response = (SPacket_C2M_Simple_Response*) &s_send_event->spkt;
     spkt_simple_response->response = response;
-    spkt_simple_response->m2c_pkt_id = m2c_pkt_id;
-    spkt_simple_response->m2c_pkt_type = m2c_pkt_type;
+    spkt_simple_response->request_pkt_id = request_pkt_id;
+    spkt_simple_response->request_pkt_type = request_pkt_type;
 
     serial_send_event_complete(s_send_event);
 }
@@ -515,47 +514,49 @@ static void handle_espnow_packet_acknowledge(ESPNow_Send_Event* e_send_event)
 
     const EPacket* epkt = &e_send_event->epkt;
     int drone_idx = get_drone_idx_from_mac_addr(e_send_event->mac_addr);
-    if (drone_idx >= 0) {
-        s_drone_infos[drone_idx].responding = true;
+    if (drone_idx < 0) {
+        release_unacknowledged_espnow_send_event(e_send_event);
+        return;
     }
 
     uint8_t response_to_master = RESPONSE_FAIL;
 
     switch (epkt->header.type) {
+        
     case EPKT_C2D_CONNECT:
-        if (drone_idx >= 0 && !s_drone_infos[drone_idx].connected) {
-            s_drone_infos[drone_idx].connected = true;
-        }
+    {
+        s_drone_infos[drone_idx].connected = true;
         response_to_master = RESPONSE_SUCCESS;
-        break;
+        
+    } break;
 
     case EPKT_C2D_DISCONNECT:
-        if (drone_idx >= 0 && s_drone_infos[drone_idx].connected) {
-            esp_err_t ret = esp_now_del_peer(s_drone_infos[drone_idx].mac_addr);
-            if (ret != ESP_OK) {
-                LOG_DEBUG("handle_espnow_packet_acknowledge: Failed to delete Drone from peer list, ESP_ERR: %s",
-                          esp_err_to_name(ret));
-            }
+    {
+        if (!s_drone_infos[drone_idx].connected) break;
 
-            s_drone_infos[drone_idx].connected = false;
+        esp_err_t ret = esp_now_del_peer(s_drone_infos[drone_idx].mac_addr);
+        if (ret != ESP_OK) {
+            LOG_DEBUG("handle_espnow_packet_acknowledge: Failed to delete Drone from peer list, ESP_ERR: %s",
+                      esp_err_to_name(ret));
         }
-        response_to_master = RESPONSE_SUCCESS;
-        break;
 
-    case EPKT_C2D_PING:
+        s_drone_infos[drone_idx].connected = false;
         response_to_master = RESPONSE_SUCCESS;
-        break;
+        
+    } break;
 
-    case EPKT_C2D_DRONE_SETTINGS:
-        if (drone_idx >= 0) {
-            LOG_INFO("Updated settings on drone '%s'.", s_drone_infos[drone_idx].drone_name);
-        }
+    case EPKT_C2D_PING: {
         response_to_master = RESPONSE_SUCCESS;
-        break;
+    } break;
 
-    default:
+    case EPKT_C2D_DRONE_SETTINGS: {
+        response_to_master = RESPONSE_SUCCESS;
+    } break;
+
+    default: {
         LOG_DEBUG("Received acknowledge for ESP-Now Packet with unexpected type: '%u'", epkt->header.type);
-        break;
+    } break;
+        
     }
 
     if (e_send_event->send_simple_response_to_master) {
@@ -868,26 +869,27 @@ static void handle_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_eve
         bool unexpected_drone = false;
         int drone_idx = 0;
 
-        for (; drone_idx < MAX_DRONES; ++drone_idx) {
+        for (; drone_idx < MAX_DRONES; ++drone_idx)
+        {
             if (first_empty_idx < 0 && !s_drone_infos[drone_idx].occupied) {
                 first_empty_idx = drone_idx;
             }
 
             bool matching_mac_addr = memcmp(s_drone_infos[drone_idx].mac_addr, e_recv_event->mac_addr, ESP_NOW_ETH_ALEN) == 0;
-            bool matching_drone_name = strncmp(s_drone_infos[drone_idx].drone_name,
-                                               epkt_advertise->drone_name,
-                                               MAX_DRONE_NAME_LENGTH) == 0;
-
+            bool matching_drone_name = strncmp(s_drone_infos[drone_idx].drone_name, epkt_advertise->drone_name, DRONE_NAME_LENGTH) == 0;
+            
             if (matching_mac_addr && matching_drone_name) {
                 drone_already_indexed = true;
                 break;
-            } else if (matching_mac_addr && !matching_drone_name) {
+            }
+            else if (matching_mac_addr && !matching_drone_name) {
                 LOG_ERROR("Received AD from a drone with DIFFERENT NAME '%.*s' but the SAME MAC ADDRESS '" MACSTR "' as an already indexed drone.",
-                          MAX_DRONE_NAME_LENGTH, epkt_advertise->drone_name, MAC2STR(e_recv_event->mac_addr));
+                          DRONE_NAME_LENGTH, epkt_advertise->drone_name, MAC2STR(e_recv_event->mac_addr));
                 unexpected_drone = true;
-            } else if (!matching_mac_addr && matching_drone_name) {
+            }
+            else if (!matching_mac_addr && matching_drone_name) {
                 LOG_ERROR("Received AD from a drone with DIFFERENT MAC ADDRESS '" MACSTR "' but the SAME NAME '%.*s' as an already indexed drone.",
-                          MAC2STR(e_recv_event->mac_addr), MAX_DRONE_NAME_LENGTH, epkt_advertise->drone_name);
+                          MAC2STR(e_recv_event->mac_addr), DRONE_NAME_LENGTH, epkt_advertise->drone_name);
                 unexpected_drone = true;
             }
         }
@@ -915,13 +917,13 @@ static void handle_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_eve
             int idx_by_name = search_drone_idx_from_drone_name(epkt_advertise->drone_name);
             if (idx_by_name >= 0) {
                 LOG_ERROR("Failed to index Drone after advertisement, because the name '%.*s' is already taken.",
-                          MAX_DRONE_NAME_LENGTH, epkt_advertise->drone_name);
+                          DRONE_NAME_LENGTH, epkt_advertise->drone_name);
                 break;
             }
 
             s_drone_infos[first_empty_idx].occupied = true;
             memcpy(s_drone_infos[first_empty_idx].mac_addr, e_recv_event->mac_addr, ESP_NOW_ETH_ALEN);
-            memcpy(s_drone_infos[first_empty_idx].drone_name, epkt_advertise->drone_name, MAX_DRONE_NAME_LENGTH);
+            memcpy(s_drone_infos[first_empty_idx].drone_name, epkt_advertise->drone_name, DRONE_NAME_LENGTH);
             s_drone_infos[first_empty_idx].connected = false;
             s_drone_infos[first_empty_idx].responding = false;
         }
@@ -935,20 +937,23 @@ static void handle_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_eve
 
         if (e_send_event) {
             handle_espnow_packet_acknowledge(e_send_event);
-        } else {
+        }
+        else {
             LOG_DEBUG("Received an EPKT_D2C_ACK_RECEIVE for packet with id '%u', but this packet was not in the wait-for-ack array",
                       epkt_d2c_ack_recv->acknowledged_packet_id);
         }
+        
     } break;
 
-    case EPKT_D2C_LOG:
+    case EPKT_D2C_MSG:
     {
-        EPacket_D2C_Log* epkt_d2c_log = (EPacket_D2C_Log*) epkt;
+        EPacket_D2C_Msg* epkt_d2c_log = (EPacket_D2C_Msg*) epkt;
         int drone_idx = get_drone_idx_from_mac_addr(e_recv_event->mac_addr);
         if (drone_idx >= 0) {
-            serial_send_msg_to_master("%.*s: %.*s", MAX_DRONE_NAME_LENGTH, s_drone_infos[drone_idx].drone_name,
+            serial_send_msg_to_master("%.*s: %.*s", DRONE_NAME_LENGTH, s_drone_infos[drone_idx].drone_name,
                                       epkt_d2c_log->header.payload_size, epkt_d2c_log->msg);
         }
+        
     } break;
 
     case EPKT_D2C_IMU_DATA:
@@ -959,17 +964,17 @@ static void handle_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_eve
             break;
         }
 
-        Serial_Send_Event* s_send_event = serial_send_event_acquire(SPKT_C2M_DRONE_IMU_DATA,
-                                                                    sizeof(SPacket_C2M_Drone_Imu_Data));
+        Serial_Send_Event* s_send_event = serial_send_event_acquire(SPKT_C2M_DRONE_IMU_DATA, sizeof(SPacket_C2M_Drone_Imu_Data));
         if (!s_send_event) {
             break;
         }
 
         SPacket_C2M_Drone_Imu_Data* spkt_c2m_imu_data = (SPacket_C2M_Drone_Imu_Data*) &s_send_event->spkt;
         memcpy(&spkt_c2m_imu_data->imu_data, &epkt_d2c_imu_data->imu_data, sizeof(Payload_Imu_Data));
-        memcpy(spkt_c2m_imu_data->drone_name, s_drone_infos[drone_idx].drone_name, MAX_DRONE_NAME_LENGTH);
+        memcpy(spkt_c2m_imu_data->drone_name, s_drone_infos[drone_idx].drone_name, DRONE_NAME_LENGTH);
 
         serial_send_event_complete(s_send_event);
+        
     } break;
 
     case EPKT_D2C_TELEMETRY:
@@ -988,14 +993,16 @@ static void handle_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_eve
 
         SPacket_C2M_Drone_Telemetry* spkt_c2m_telem = (SPacket_C2M_Drone_Telemetry*) &s_send_event->spkt;
         memcpy(&spkt_c2m_telem->telemetry, &epkt_d2c_telem->telemetry, sizeof(Payload_Telemetry));
-        memcpy(spkt_c2m_telem->drone_name, s_drone_infos[drone_idx].drone_name, MAX_DRONE_NAME_LENGTH);
+        memcpy(spkt_c2m_telem->drone_name, s_drone_infos[drone_idx].drone_name, DRONE_NAME_LENGTH);
 
         serial_send_event_complete(s_send_event);
+        
     } break;
 
-    default:
+    default: {
         LOG_DEBUG("Received ESP-Now Packet with unexpected or unknown type: '%u'", epkt->header.type);
-        break;
+    } break;
+        
     }
 }
 
@@ -1033,7 +1040,8 @@ static void handle_incoming_serial_packet(const SPacket* spkt)
         ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_m2d(drone_idx, spkt, EPKT_C2D_CONNECT, sizeof(EPacket_C2D_Connect), EPKT_FLAG_REQUIRE_ACK);
         if (e_send_event) {
             espnow_send_event_complete(e_send_event);
-        } else {
+        }
+        else {
             queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_FAIL);
         }
         
@@ -1058,7 +1066,8 @@ static void handle_incoming_serial_packet(const SPacket* spkt)
         ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_m2d(drone_idx, spkt, EPKT_C2D_DISCONNECT, sizeof(EPacket_C2D_Disconnect), EPKT_FLAG_REQUIRE_ACK);
         if (e_send_event) {
             espnow_send_event_complete(e_send_event);
-        } else {
+        }
+        else {
             queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_FAIL);
         }
         
@@ -1121,7 +1130,7 @@ static void handle_incoming_serial_packet(const SPacket* spkt)
             if (s_drone_infos[i].responding) {
                 drone_info->flags |= DRONE_INFO_FLAG_IS_RESPONDING;
             }
-            memcpy(drone_info->drone_name, s_drone_infos[i].drone_name, MAX_DRONE_NAME_LENGTH);
+            memcpy(drone_info->drone_name, s_drone_infos[i].drone_name, DRONE_NAME_LENGTH);
             ++drone_infos_idx;
         }
 
@@ -1147,7 +1156,8 @@ static void handle_incoming_serial_packet(const SPacket* spkt)
         ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_m2d(drone_idx, spkt, EPKT_C2D_PING, sizeof(EPacket_C2D_Ping), EPKT_FLAG_REQUIRE_ACK);
         if (e_send_event) {
             espnow_send_event_complete(e_send_event);
-        } else {
+        }
+        else {
             queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_FAIL);
         }
         
@@ -1172,7 +1182,8 @@ static void handle_incoming_serial_packet(const SPacket* spkt)
         ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_m2d(drone_idx, spkt, EPKT_C2D_RESTART, sizeof(EPacket_C2D_Restart), 0);
         if (e_send_event) {
             espnow_send_event_complete(e_send_event);
-        } else {
+        }
+        else {
             queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_FAIL);
         }
         
@@ -1199,7 +1210,8 @@ static void handle_incoming_serial_packet(const SPacket* spkt)
             EPacket_C2D_Drone_Settings* epkt_c2d_settings = (EPacket_C2D_Drone_Settings*) &e_send_event->epkt;
             memcpy(&epkt_c2d_settings->settings, &spkt_m2c_settings->settings, sizeof(Payload_Drone_Settings));
             espnow_send_event_complete(e_send_event);
-        } else {
+        }
+        else {
             queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_FAIL);
         }
         
@@ -1261,7 +1273,8 @@ static void send_espnow_packet(ESPNow_Send_Event* e_send_event)
             if (!success) {
                 handle_espnow_packet_failed_acknowledge(e_send_event_copy);
             }
-        } else {
+        }
+        else {
             LOG_ERROR("send_espnow_packet: Failed to find an empty slot for an unacknowledged ESP-Now send event, all (%d) slots are occupied",
                       MAX_ESPNOW_PACKETS_WAITING_FOR_ACK);
         }
@@ -1282,6 +1295,7 @@ static void resend_unacknowledged_espnow_packet(ESPNow_Resend_Unacknowledged_Eve
         return;
     }
 
+    // Restart the timer
     esp_err_t ret = esp_timer_start_once(e_send_event->pkt_resend_timer,
                                          s_espnow_wait_for_ack_resend_timeouts_ms[e_send_event->resend_count] * 1000);
     if (ret != ESP_OK) {
@@ -1342,5 +1356,5 @@ int app_main(void)
         vRingbufferReturnItem(s_event_ringbuf, event);
     }
 
-    esp_restart();
+    esp_restart(); // should be unreachable
 }
