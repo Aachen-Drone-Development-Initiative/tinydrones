@@ -110,6 +110,8 @@ static esp_timer_handle_t s_periodic_advertise_timer = NULL;
 
 static int64_t s_time_of_last_espnow_err_out_of_memory_us = 0;
 
+static espnow_update_parameters_callback_t s_update_parameters_callback = NULL;
+
 static ESPNow_Send_Event* get_unacknowledged_espnow_send_event_from_packet_id(EPacket_ID target_packet_id)
 {
     for (int i = 0; i < MAX_ESPNOW_PACKETS_WAITING_FOR_ACK; ++i) {
@@ -493,13 +495,6 @@ static void handle_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_eve
         
     } break;
 
-    case EPKT_C2D_DRONE_SETTINGS:
-    {
-        EPacket_C2D_Drone_Settings* epkt_c2d_settings = (EPacket_C2D_Drone_Settings*) epkt;
-        (void) epkt_c2d_settings;
-        // Handle incoming drone settings here once the flight controller exposes a consumer for them.
-    } break;
-    
     case EPKT_C2D_ACK_RECEIVE:
     {
         EPacket_C2D_Ack_Receive* epkt_c2d_ack_recv = (EPacket_C2D_Ack_Receive*) epkt;
@@ -517,11 +512,18 @@ static void handle_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_eve
 
     } break;
 
-    case EPKT_C2D_PING:
-        break; // Do nothing except sending an ack
+    case EPKT_C2D_PING: break; // Do nothing except sending an ack
 
     case EPKT_C2D_RESTART: {
         esp_restart();
+    } break;
+
+    case EPKT_C2D_PARAMETERS:
+    {
+        if (s_update_parameters_callback) {
+            s_update_parameters_callback((EPacket_C2D_Parameters*) epkt);
+        }
+        
     } break;
         
     default:
@@ -635,7 +637,7 @@ static void espnow_messaging_task(void*)
 // Public API implementation
 
 
-void espnow_init_and_start_task(bool long_range_wifi, uint32_t task_priority, uint32_t task_stack_size)
+void espnow_init(const Espnow_Messaging_Config* config)
 {
     // Init wifi
     
@@ -648,7 +650,7 @@ void espnow_init_and_start_task(bool long_range_wifi, uint32_t task_priority, ui
     assert(esp_wifi_set_mode(ESPNOW_WIFI_MODE) == ESP_OK);
     assert(esp_wifi_start() == ESP_OK);
 
-    if (long_range_wifi) {
+    if (config->long_range_wifi) {
         assert(esp_wifi_set_protocol(ESPNOW_WIFI_IF, WIFI_PROTOCOL_11B|WIFI_PROTOCOL_11G|WIFI_PROTOCOL_11N|WIFI_PROTOCOL_LR)
                == ESP_OK);
     }
@@ -669,7 +671,7 @@ void espnow_init_and_start_task(bool long_range_wifi, uint32_t task_priority, ui
     // Initialising state
 
     s_event_ringbuf = xRingbufferCreate(EVENT_RINGBUF_SIZE, RINGBUF_TYPE_NOSPLIT);
-
+    
     // Create advertise timer
 
     const esp_timer_create_args_t periodic_advertise_timer_args = {
@@ -686,7 +688,7 @@ void espnow_init_and_start_task(bool long_range_wifi, uint32_t task_priority, ui
     // Starting the espnow messaging task
     
     TaskHandle_t task_handle = NULL; // We don't keep the task handle, because we don't need it.
-    xTaskCreate(espnow_messaging_task, "espnow_messaging_task", task_stack_size, NULL, task_priority, &task_handle);
+    xTaskCreate(espnow_messaging_task, "espnow_messaging_task", config->task_stack_size, NULL, config->task_priority, &task_handle);
     assert(task_handle);
 }
 
@@ -708,11 +710,6 @@ void espnow_block_until_controller_connected()
     }
 }
 
-void espnow_get_latest_controll_commands(Payload_Controll_Commands* out)
-{
-    *out = get_control_commands();
-}
-
 bool espnow_controller_connected()
 {
     return get_controller_connected();
@@ -721,6 +718,11 @@ bool espnow_controller_connected()
 bool espnow_controller_online()
 {
     return !is_controller_offline();
+}
+
+void espnow_get_latest_controll_commands(Payload_Controll_Commands* out)
+{
+    *out = get_control_commands();
 }
 
 EHeader espnow_header_create(EPacket_Type type, size_t packet_size, EPacket_Flags flags)
@@ -750,7 +752,7 @@ Espnow_Messaging_Ret espnow_send_packet_to_controller(EPacket* epkt)
     if (e_send_event) {
         memcpy(&e_send_event->epkt, epkt, epkt_size);
         espnow_send_event_complete(e_send_event);
-        return ESPNOW_MSG_OK;        
+        return ESPNOW_MSG_OK;
     }
     return ESPNOW_MSG_ERR_ESP_NOW_SEND_FAIL;
 }
@@ -787,4 +789,69 @@ Espnow_Messaging_Ret espnow_send_msg_to_controller(const char* format, ...)
         return ESPNOW_MSG_ERR_ESP_NOW_SEND_FAIL;
     }
     return ESPNOW_MSG_OK;
+}
+
+void espnow_set_espnow_update_parameters_callback(espnow_update_parameters_callback_t callback)
+{
+    // TODO (yuzeni) maybe make this thread safe with atomics or a mutex.
+    s_update_parameters_callback = callback;
+}
+
+static inline size_t get_dtype_size(uint8_t dtype)
+{
+    switch (dtype) {
+    case DTYPE_INT32:   return sizeof(int);
+    case DTYPE_INT64:   return sizeof(int64_t);
+    case DTYPE_FLOAT32: return sizeof(float);
+    }
+    return 0;
+}
+
+bool espnow_expect_parameter(const EPacket_C2D_Parameters* epkt_params, const char* name, void* value_out)
+{
+    const Payload_Named_Value* params = epkt_params->parameters;
+    int16_t param_count = epkt_params->parameter_count;
+    
+    for (int i = 0; i < param_count; ++i) {
+        if (strncmp(params[i].name, name, NAMED_VALUE_NAME_LENGTH) == 0) {
+            memcpy(value_out, &params[i].data, get_dtype_size(params[i].dtype));
+            return true;
+        }
+    }
+    return false;
+}
+
+Payload_Named_Value espnow_create_named_value(const char* name, uint8_t dtype, void* value_in)
+{
+    Payload_Named_Value log_val = {0};
+    log_val.dtype = dtype;
+    memcpy(log_val.name, name, NAMED_VALUE_NAME_LENGTH);
+    memcpy(&log_val.data, value_in, get_dtype_size(dtype));
+    return log_val;
+}
+
+Espnow_Messaging_Ret espnow_send_log_values_to_controller(const Payload_Named_Value* log_values, int log_value_count)
+{
+    if (log_value_count < 0)                              return ESPNOW_MSG_OK;
+    if (log_value_count > 0 && log_values == NULL)        return ESPNOW_MSG_ERR_ARG;
+    if (log_value_count > EPKT_MAX_LOG_VALUES_PER_PACKET) return ESPNOW_MSG_ERR_PACKET_TOO_LARGE;
+    
+    if (!get_controller_connected()) return ESPNOW_MSG_ERR_CONTROLLER_DISCONNECTED;
+    if (is_controller_offline())     return ESPNOW_MSG_ERR_CONTROLLER_OFFLINE;
+
+    size_t epkt_size = sizeof(EPacket_D2C_Log_Values) + log_value_count * sizeof(Payload_Named_Value);
+    ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_raw(s_controller.mac_addr, epkt_size, EVENT_RINGBUF_ACQUIRE_TICKS_TO_WAIT_FOR_OTHER_TASK);
+    if (e_send_event)
+    {
+        EPacket_D2C_Log_Values* pkt_log_vals = (EPacket_D2C_Log_Values*) &e_send_event->epkt;
+        pkt_log_vals->header = espnow_header_create(EPKT_D2C_LOG_VALUES, epkt_size, 0);
+        
+        pkt_log_vals->log_value_count = log_value_count;
+        memcpy(pkt_log_vals->log_values, log_values, log_value_count * sizeof(Payload_Named_Value));
+        espnow_send_event_complete(e_send_event);
+            
+        return ESPNOW_MSG_OK;
+    }
+
+    return ESPNOW_MSG_ERR_ESP_NOW_SEND_FAIL;
 }

@@ -14,12 +14,11 @@
 
 enum {
     EPKT_INVALID = 0,
-    
+
     EPKT_D2C_ADVERTISE = 1,           // Drone notifies the Controller that it is available and would like to connect
     EPKT_D2C_ACK_RECEIVE = 4,         // Drone acknowledges that a specific packet was received
-    EPKT_D2C_LOG = 5,                 // Drone sends log message to Controller
-    EPKT_D2C_IMU_DATA = 6,            // Drone sends IMU data to Controller
-    EPKT_D2C_TELEMETRY = 7,           // Drone sends telemetry data to Controller
+    EPKT_D2C_MSG = 5,                 // Drone sends a text message to the Controller
+    EPKT_D2C_LOG_VALUES = 6,
 
     EPKT_C2D_CONNECT = 32,            // Controller asks Drone to connect
     EPKT_C2D_DISCONNECT = 33,         // Controller asks Drone to disconnect
@@ -27,7 +26,7 @@ enum {
     EPKT_C2D_ACK_RECEIVE = 35,        // Controller acknowledges that a specific packet was received
     EPKT_C2D_PING = 36,               // Controller expects an ACK_RECEIVE from the drone
     EPKT_C2D_RESTART = 37,            // Controller asks Drone to restart
-    EPKT_C2D_DRONE_SETTINGS = 38,     // Controller sends settings to the Drone
+    EPKT_C2D_PARAMETERS = 38,
 };
 typedef uint8_t EPacket_Type;
 
@@ -61,7 +60,7 @@ typedef struct {
 
 typedef struct {
     EHeader header;             // type == EPKT_D2C_ADVERTISE
-    char drone_name[MAX_DRONE_NAME_LENGTH];
+    char drone_name[DRONE_NAME_LENGTH];
 } PACKED EPacket_D2C_Advertise;
 
 typedef struct {
@@ -70,19 +69,17 @@ typedef struct {
 } PACKED EPacket_D2C_Ack_Receive;
 
 typedef struct {
-    EHeader header;             // type == EPKT_D2C_LOG
+    EHeader header;             // type == EPKT_D2C_MSG
     char msg[0];                // msg_length = header.payload_size
-} PACKED EPacket_D2C_Log;
+} PACKED EPacket_D2C_Msg;
 
 typedef struct {
-    EHeader header;             // type == EPKT_D2C_IMU_DATA
-    Payload_Imu_Data imu_data;
-} PACKED EPacket_D2C_Imu_Data;
+    EHeader header;             // type == EPKT_D2C_LOG_VALUES
+    int16_t log_value_count;
+    Payload_Named_Value log_values[0];
+} PACKED EPacket_D2C_Log_Values;
 
-typedef struct {
-    EHeader header;             // type == EPKT_D2C_TELEMETRY
-    Payload_Telemetry telemetry;
-} PACKED EPacket_D2C_Telemetry;
+#define EPKT_MAX_LOG_VALUES_PER_PACKET ((EPKT_MAX_SIZE - sizeof(EPacket_D2C_Log_Values)) / sizeof(Payload_Named_Value))
 
 
 // C2D - Controller to Drone Packets
@@ -115,9 +112,12 @@ typedef struct {
 } PACKED EPacket_C2D_Restart;
 
 typedef struct {
-    EHeader header;             // type == EPKT_C2D_DRONE_SETTINGS, flags = EPKT_FLAG_REQUIRE_ACK
-    Payload_Drone_Settings settings;
-} PACKED EPacket_C2D_Drone_Settings;
+    EHeader header;             // type == EPKT_C2D_PARAMETERS, flags = EPKT_FLAG_REQUIRE_ACK
+    int16_t parameter_count;
+    Payload_Named_Value parameters[0];
+} PACKED EPacket_C2D_Parameters;
+
+#define EPKT_MAX_PARAMETERS_PER_PACKET ((EPKT_MAX_SIZE - sizeof(EPacket_D2C_Parameters)) / sizeof(Payload_Named_Value))
 
 
 #undef PACKED

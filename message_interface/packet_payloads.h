@@ -14,33 +14,9 @@ typedef struct {
     int16_t pitch;
     int16_t yaw;
     int16_t roll;
-    int16_t throttle;
+    int16_t thrust;
     uint8_t flags;
 } PACKED Payload_Controll_Commands;
-
-typedef struct {
-    float roll_p;
-    float roll_i;
-    float roll_d;
-    float pitch_p;
-    float pitch_i;
-    float pitch_d;
-    float yaw_p;
-    float yaw_i;
-    float yaw_d;
-} PACKED Payload_Drone_Settings;
-
-typedef struct {
-    int64_t time_us;
-    float omega_x, omega_y, omega_z; // [rad/s]
-    float acc_x, acc_y, acc_z;       // [m/s^2]
-} PACKED Payload_Imu_Data;
-
-typedef struct {
-    int64_t time_us;
-    float battery_voltage;
-    // ...
-} PACKED Payload_Telemetry;
 
 enum {
     DRONE_INFO_FLAG_IS_CONNETED      = 1 << 0,
@@ -49,7 +25,20 @@ enum {
 
 typedef struct {
     uint8_t flags;
-    char drone_name[MAX_DRONE_NAME_LENGTH];
+    char drone_name[DRONE_NAME_LENGTH];
 } PACKED Payload_Drone_Info;
+
+enum {
+    DTYPE_INT32,
+    DTYPE_INT64,
+    DTYPE_FLOAT32,
+};
+
+typedef struct {
+    uint8_t dtype;
+    char name[NAMED_VALUE_NAME_LENGTH];
+    uint64_t data;
+} PACKED Payload_Named_Value;
+
 
 #undef PACKED

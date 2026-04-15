@@ -16,8 +16,42 @@
 static i2c_master_bus_handle_t  s_i2c_master_bus = NULL;
 static MPU6050_Handle           s_mpu = {0};
 
+void espnow_update_parameters_callback(const EPacket_C2D_Parameters* epkt_params)
+{
+    const Payload_Named_Value* params = epkt_params->parameters;
+    int16_t param_count = epkt_params->parameter_count;
+    
+    for (int i = 0; i < param_count; ++i)
+    {
+        CONTR_LOG_DEBUG("param_name=%.*s", NAMED_VALUE_NAME_LENGTH, params[i].name);
+        
+        switch (params[i].dtype) {
+        case DTYPE_INT32: {
+            int value = 0;
+            memcpy(&value, &params[i].data, sizeof(value));
+            CONTR_LOG_DEBUG("param_value=%d", value);
+        } break;
+            
+        case DTYPE_INT64: {
+            int64_t value = 0;
+            memcpy(&value, &params[i].data, sizeof(value));
+            CONTR_LOG_DEBUG("param_value=%dll", value);
+        } break;
+            
+        case DTYPE_FLOAT32: {
+            float value = 0;
+            memcpy(&value, &params[i].data, sizeof(value));
+            CONTR_LOG_DEBUG("param_value=%f", value);
+        } break;
+            
+        }
+        
+    }
+}
+
 static void tinydrone_task(void*)
 {
+    espnow_set_espnow_update_parameters_callback(espnow_update_parameters_callback);
     espnow_block_until_controller_connected();
     
     while (true)
@@ -81,9 +115,17 @@ static esp_err_t tinydrone_init(gpio_num_t i2c_sda,
     /*     // TODO: Do good error reporting */
     /*     return ESP_FAIL; */
     /* } */
-    
+
+
     // Init espnow messaging
-    espnow_init_and_start_task(false, DEFAULT_TASK_PRIORITY, DEFAULT_TASK_STACK_DEPTH * 10);
+    
+    Espnow_Messaging_Config espnow_msg_config = {
+        .long_range_wifi = false,
+        .task_priority   = DEFAULT_TASK_PRIORITY,
+        .task_stack_size = DEFAULT_TASK_STACK_DEPTH * 10,
+    };
+    
+    espnow_init(&espnow_msg_config);
 
     return ESP_OK;
 }

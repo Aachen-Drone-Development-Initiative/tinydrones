@@ -945,6 +945,29 @@ static void handle_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_eve
         
     } break;
 
+    case EPKT_D2C_LOG_VALUES:
+    {
+        EPacket_D2C_Log_Values* epkt_d2c_logs = (EPacket_D2C_Log_Values*) epkt;
+        int drone_idx = get_drone_idx_from_mac_addr(e_recv_event->mac_addr);
+        if (drone_idx < 0) {
+            break;
+        }
+
+        size_t spkt_size = sizeof(SPacket_C2M_Drone_Log_Values) + epkt_d2c_logs->log_value_count * sizeof(Payload_Named_Value);
+        Serial_Send_Event* s_send_event = serial_send_event_acquire(SPKT_C2M_DRONE_LOG_VALUES, spkt_size);
+        if (!s_send_event) {
+            break;
+        }
+
+        SPacket_C2M_Drone_Log_Values* spkt_c2m_logs = (SPacket_C2M_Drone_Log_Values*) &s_send_event->spkt;
+        memcpy(spkt_c2m_imu_data->drone_name, s_drone_infos[drone_idx].drone_name, DRONE_NAME_LENGTH);
+        spkt_c2m_logs->log_value_count = epkt_d2c_logs->log_value_count;
+        memcpy(spkt_c2m_logs->log_values, epkt_d2c_logs->log_values, epkt_d2c_logs->log_value_count * sizeof(Payload_Named_Value));
+
+        serial_send_event_complete(s_send_event);
+        
+    } break;
+
     case EPKT_D2C_MSG:
     {
         EPacket_D2C_Msg* epkt_d2c_log = (EPacket_D2C_Msg*) epkt;
@@ -953,49 +976,6 @@ static void handle_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_eve
             serial_send_msg_to_master("%.*s: %.*s", DRONE_NAME_LENGTH, s_drone_infos[drone_idx].drone_name,
                                       epkt_d2c_log->header.payload_size, epkt_d2c_log->msg);
         }
-        
-    } break;
-
-    case EPKT_D2C_IMU_DATA:
-    {
-        EPacket_D2C_Imu_Data* epkt_d2c_imu_data = (EPacket_D2C_Imu_Data*) epkt;
-        int drone_idx = get_drone_idx_from_mac_addr(e_recv_event->mac_addr);
-        if (drone_idx < 0) {
-            break;
-        }
-
-        Serial_Send_Event* s_send_event = serial_send_event_acquire(SPKT_C2M_DRONE_IMU_DATA, sizeof(SPacket_C2M_Drone_Imu_Data));
-        if (!s_send_event) {
-            break;
-        }
-
-        SPacket_C2M_Drone_Imu_Data* spkt_c2m_imu_data = (SPacket_C2M_Drone_Imu_Data*) &s_send_event->spkt;
-        memcpy(&spkt_c2m_imu_data->imu_data, &epkt_d2c_imu_data->imu_data, sizeof(Payload_Imu_Data));
-        memcpy(spkt_c2m_imu_data->drone_name, s_drone_infos[drone_idx].drone_name, DRONE_NAME_LENGTH);
-
-        serial_send_event_complete(s_send_event);
-        
-    } break;
-
-    case EPKT_D2C_TELEMETRY:
-    {
-        EPacket_D2C_Telemetry* epkt_d2c_telem = (EPacket_D2C_Telemetry*) epkt;
-        int drone_idx = get_drone_idx_from_mac_addr(e_recv_event->mac_addr);
-        if (drone_idx < 0) {
-            break;
-        }
-
-        Serial_Send_Event* s_send_event = serial_send_event_acquire(SPKT_C2M_DRONE_TELEMETRY,
-                                                                    sizeof(SPacket_C2M_Drone_Telemetry));
-        if (!s_send_event) {
-            break;
-        }
-
-        SPacket_C2M_Drone_Telemetry* spkt_c2m_telem = (SPacket_C2M_Drone_Telemetry*) &s_send_event->spkt;
-        memcpy(&spkt_c2m_telem->telemetry, &epkt_d2c_telem->telemetry, sizeof(Payload_Telemetry));
-        memcpy(spkt_c2m_telem->drone_name, s_drone_infos[drone_idx].drone_name, DRONE_NAME_LENGTH);
-
-        serial_send_event_complete(s_send_event);
         
     } break;
 
@@ -1189,26 +1169,28 @@ static void handle_incoming_serial_packet(const SPacket* spkt)
         
     } break;
 
-    case SPKT_M2C_DRONE_SETTINGS:
+    case SPKT_M2C_SET_DRONE_PARAMETERS:
     {
-        SPacket_M2C_Drone_Settings* spkt_m2c_settings = (SPacket_M2C_Drone_Settings*) spkt;
+        SPacket_M2C_Set_Drone_Parameters* spkt_m2c_set_params = (SPacket_M2C_Set_Drone_Parameters*) spkt;
 
-        int drone_idx = get_drone_idx_from_drone_name(spkt_m2c_settings->drone_name);
+        int drone_idx = get_drone_idx_from_drone_name(spkt_m2c_set_params->drone_name);
         if (drone_idx < 0) {
             queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_FAIL);
             break;
         }
 
         if (!s_drone_infos[drone_idx].connected) {
-            LOG_ERROR("Can't send drone settings because the drone is not connected.");
+            LOG_ERROR("Can't set drone parameters because the drone is not connected.");
             queue_c2m_simple_response_for_send(spkt->header.packet_id, spkt->header.type, RESPONSE_FAIL);
             break;
         }
 
-        ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_m2d(drone_idx, spkt, EPKT_C2D_DRONE_SETTINGS, sizeof(EPacket_C2D_Drone_Settings), EPKT_FLAG_REQUIRE_ACK);
+        size_t epkt_size = sizeof(EPacket_C2D_Parameters) + spkt_m2c_set_params->parameter_count * sizeof(Payload_Named_Value);
+        ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_m2d(drone_idx, spkt, EPKT_C2D_PARAMETERS, epkt_size, EPKT_FLAG_REQUIRE_ACK);
         if (e_send_event) {
-            EPacket_C2D_Drone_Settings* epkt_c2d_settings = (EPacket_C2D_Drone_Settings*) &e_send_event->epkt;
-            memcpy(&epkt_c2d_settings->settings, &spkt_m2c_settings->settings, sizeof(Payload_Drone_Settings));
+            EPacket_C2D_Parameters* epkt_c2d_params = (EPacket_C2D_Parameters*) &e_send_event->epkt;
+            epkt_c2d_params->parameter_count = spkt_m2c_set_params->parameter_count;
+            memcpy(epkt_c2d_params->parameters, spkt_m2c_set_params->parameters, spkt_m2c_set_params->parameter_count * sizeof(Payload_Named_Value));
             espnow_send_event_complete(e_send_event);
         }
         else {

@@ -221,10 +221,11 @@ def restart(drone_name: str):
     write_packet(pack_m2c_restart_drone(drone_name))
 
 
-def set_drone_settings(drone_name: str,
-                       roll_p: float, roll_i: float, roll_d: float,
-                       pitch_p: float, pitch_i: float, pitch_d: float,
-                       yaw_p: float, yaw_i: float, yaw_d: float):
+def set_drone_parameters(drone_name: str,
+                         named_params: list[tuple[str, int | float]]
+                         roll_p: float, roll_i: float, roll_d: float,
+                         pitch_p: float, pitch_i: float, pitch_d: float,
+                         yaw_p: float, yaw_i: float, yaw_d: float):
     """Send PID settings for roll, pitch, and yaw to a drone."""
     m2c_packet = pack_m2c_drone_settings(drone_name,
                                          roll_p, roll_i, roll_d,
