@@ -29,9 +29,9 @@ typedef struct {
 } PACKED Payload_Drone_Info;
 
 enum {
-    DTYPE_INT32,
-    DTYPE_INT64,
-    DTYPE_FLOAT32,
+    DTYPE_INT32     = 0,
+    DTYPE_INT64     = 1,
+    DTYPE_FLOAT32   = 2,
 };
 
 typedef struct {

@@ -800,7 +800,7 @@ void espnow_set_espnow_update_parameters_callback(espnow_update_parameters_callb
 static inline size_t get_dtype_size(uint8_t dtype)
 {
     switch (dtype) {
-    case DTYPE_INT32:   return sizeof(int);
+    case DTYPE_INT32:   return sizeof(int32_t);
     case DTYPE_INT64:   return sizeof(int64_t);
     case DTYPE_FLOAT32: return sizeof(float);
     }
@@ -823,11 +823,17 @@ bool espnow_expect_parameter(const EPacket_C2D_Parameters* epkt_params, const ch
 
 Payload_Named_Value espnow_create_named_value(const char* name, uint8_t dtype, void* value_in)
 {
-    Payload_Named_Value log_val = {0};
-    log_val.dtype = dtype;
-    memcpy(log_val.name, name, NAMED_VALUE_NAME_LENGTH);
-    memcpy(&log_val.data, value_in, get_dtype_size(dtype));
-    return log_val;
+    Payload_Named_Value named_value = {0};
+    size_t dtype_size = get_dtype_size(dtype);
+    size_t name_len = strnlen(name, NAMED_VALUE_NAME_LENGTH);
+
+    named_value.dtype = dtype;
+    memcpy(named_value.name, name, name_len);
+    if (dtype_size > 0) {
+        memcpy(&named_value.data, value_in, dtype_size);
+    }
+
+    return named_value;
 }
 
 Espnow_Messaging_Ret espnow_send_log_values_to_controller(const Payload_Named_Value* log_values, int log_value_count)

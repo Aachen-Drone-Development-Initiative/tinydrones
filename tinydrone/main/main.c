@@ -20,33 +20,39 @@ void espnow_update_parameters_callback(const EPacket_C2D_Parameters* epkt_params
 {
     const Payload_Named_Value* params = epkt_params->parameters;
     int16_t param_count = epkt_params->parameter_count;
+
+    espnow_send_log_values_to_controller(params, param_count);
     
-    for (int i = 0; i < param_count; ++i)
-    {
-        CONTR_LOG_DEBUG("param_name=%.*s", NAMED_VALUE_NAME_LENGTH, params[i].name);
+    /* for (int i = 0; i < param_count; ++i) */
+    /* { */
+    /*     CONTR_LOG_DEBUG("param_name=%.*s", NAMED_VALUE_NAME_LENGTH, params[i].name); */
         
-        switch (params[i].dtype) {
-        case DTYPE_INT32: {
-            int value = 0;
-            memcpy(&value, &params[i].data, sizeof(value));
-            CONTR_LOG_DEBUG("param_value=%d", value);
-        } break;
+    /*     switch (params[i].dtype) { */
+    /*     case DTYPE_INT32: { */
+    /*         int32_t value = 0; */
+    /*         memcpy(&value, &params[i].data, sizeof(value)); */
+    /*         CONTR_LOG_DEBUG("param_value=%d", value); */
+    /*     } break; */
             
-        case DTYPE_INT64: {
-            int64_t value = 0;
-            memcpy(&value, &params[i].data, sizeof(value));
-            CONTR_LOG_DEBUG("param_value=%dll", value);
-        } break;
+    /*     case DTYPE_INT64: { */
+    /*         int64_t value = 0; */
+    /*         memcpy(&value, &params[i].data, sizeof(value)); */
+    /*         CONTR_LOG_DEBUG("param_value=%lld", (long long) value); */
+    /*     } break; */
             
-        case DTYPE_FLOAT32: {
-            float value = 0;
-            memcpy(&value, &params[i].data, sizeof(value));
-            CONTR_LOG_DEBUG("param_value=%f", value);
-        } break;
+    /*     case DTYPE_FLOAT32: { */
+    /*         float value = 0; */
+    /*         memcpy(&value, &params[i].data, sizeof(value)); */
+    /*         CONTR_LOG_DEBUG("param_value=%f", value); */
+    /*     } break; */
+
+    /*     default: */
+    /*         CONTR_LOG_DEBUG("param_value=<unknown dtype %u>", params[i].dtype); */
+    /*         break; */
             
-        }
+    /*     } */
         
-    }
+    /* } */
 }
 
 static void tinydrone_task(void*)
@@ -71,8 +77,17 @@ static void tinydrone_task(void*)
             CONTR_LOG_DEBUG("not armed.");
         }
 
+        /* float acc_x = 1.3, acc_y = 432.3, acc_z = 34.2; */
+
+        /* Payload_Named_Value log_values[] = { */
+        /*     espnow_create_named_value("acc_x", DTYPE_FLOAT32, &acc_x), */
+        /*     espnow_create_named_value("acc_y", DTYPE_FLOAT32, &acc_y), */
+        /*     espnow_create_named_value("acc_z", DTYPE_FLOAT32, &acc_z), */
+        /* }; */
         
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        /* espnow_send_log_values_to_controller(log_values, 3); */
+        
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 
     vTaskDelete(NULL); // Delete this task

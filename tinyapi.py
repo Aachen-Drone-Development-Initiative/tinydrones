@@ -221,24 +221,17 @@ def restart(drone_name: str):
     write_packet(pack_m2c_restart_drone(drone_name))
 
 
-def set_drone_parameters(drone_name: str,
-                         named_params: list[tuple[str, int | float]]
-                         roll_p: float, roll_i: float, roll_d: float,
-                         pitch_p: float, pitch_i: float, pitch_d: float,
-                         yaw_p: float, yaw_i: float, yaw_d: float):
-    """Send PID settings for roll, pitch, and yaw to a drone."""
-    m2c_packet = pack_m2c_drone_settings(drone_name,
-                                         roll_p, roll_i, roll_d,
-                                         pitch_p, pitch_i, pitch_d,
-                                         yaw_p, yaw_i, yaw_d)
+def set_drone_parameters(drone_name: str, named_params: list[tuple[str, int, any]]):
+    """Send named parameters to a drone."""
+    m2c_packet = pack_m2c_set_drone_parameters(drone_name, named_params)
     write_packet(m2c_packet)
     c2m_response = expect_simple_response(get_packet_id(m2c_packet), 3)
     if c2m_response.response == RESPONSE_SUCCESS:
-        print(f"Updated settings on drone '{drone_name}'")
+        print(f"Updated parameters on drone '{drone_name}'")
     elif c2m_response.response == RESPONSE_FAIL:
-        print(f"Failed to update settings on drone '{drone_name}'")
+        print(f"Failed to update parameters on drone '{drone_name}'")
     else:
-        raise CorruptPacketError(f"Unexpected response '{c2m_response.response}'")        
+        raise CorruptPacketError(f"Unexpected response '{c2m_response.response}'")
 
 
 def monitor():

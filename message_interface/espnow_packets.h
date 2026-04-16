@@ -117,7 +117,7 @@ typedef struct {
     Payload_Named_Value parameters[0];
 } PACKED EPacket_C2D_Parameters;
 
-#define EPKT_MAX_PARAMETERS_PER_PACKET ((EPKT_MAX_SIZE - sizeof(EPacket_D2C_Parameters)) / sizeof(Payload_Named_Value))
+#define EPKT_MAX_PARAMETERS_PER_PACKET ((EPKT_MAX_SIZE - sizeof(EPacket_C2D_Parameters)) / sizeof(Payload_Named_Value))
 
 
 #undef PACKED

@@ -2,6 +2,7 @@ import struct, logging, random
 from types import SimpleNamespace
 
 DRONE_NAME_LENGTH = 12
+NAMED_VALUE_NAME_LENGTH = 10
 SPKT_MAX_SIZE = 1024 * 4
 
 
@@ -13,13 +14,17 @@ SPKT_M2C_CONTROLL_COMMANDS = 66
 SPKT_M2C_GET_DRONE_INFOS = 67
 SPKT_M2C_PING_DRONE = 68
 SPKT_M2C_RESTART_DRONE = 69
-SPKT_M2C_DRONE_SETTINGS = 70
+SPKT_M2C_SET_DRONE_PARAMETERS = 70
 
 SPKT_C2M_SIMPLE_RESPONSE = 96
 SPKT_C2M_DRONE_INFOS = 97
-SPKT_C2M_DRONE_IMU_DATA = 98
-SPKT_C2M_DRONE_TELEMETRY = 99
+SPKT_C2M_DRONE_LOG_VALUES = 98
 SPKT_C2M_MSG = 100
+
+
+DTYPE_INT32 = 0
+DTYPE_INT64 = 1
+DTYPE_FLOAT32 = 2
 
 
 SERIAL_DELIMITER = (0xB62A429F).to_bytes(4, byteorder='little')
@@ -73,17 +78,28 @@ def pack_m2c_control_commands(drone_name: str, pitch: int, yaw: int, roll: int, 
     return header + payload
 
 
-def pack_m2c_drone_settings(drone_name: str,
-                            roll_p: float, roll_i: float, roll_d: float,
-                            pitch_p: float, pitch_i: float, pitch_d: float,
-                            yaw_p: float, yaw_i: float, yaw_d: float) -> bytes:
-    payload_format = '<fffffffff' + str(DRONE_NAME_LENGTH) + 's'
-    header = pack_header(SPKT_M2C_DRONE_SETTINGS, struct.calcsize(payload_format))
-    payload = struct.pack(payload_format,
-                          roll_p, roll_i, roll_d,
-                          pitch_p, pitch_i, pitch_d,
-                          yaw_p, yaw_i, yaw_d,
-                          drone_name.encode('ascii'))
+def pack_m2c_set_drone_parameters(drone_name: str, parameters: list[tuple[str, int, any]]) -> bytes:
+    payload_format_fixed_part = '<' + str(DRONE_NAME_LENGTH) + 'sh'
+    payload = struct.pack(payload_format_fixed_part, drone_name.encode('ascii'), len(parameters))
+    
+    payload_named_value_format = '<B' + str(NAMED_VALUE_NAME_LENGTH) + 'sQ'
+    for param in parameters:
+        name, dtype, value = param
+
+        if dtype == DTYPE_INT32:
+            data_bytes = struct.pack('<i', int(value)) + bytes(4)
+        if dtype == DTYPE_INT64:
+            data_bytes = struct.pack('<Q', int(value))
+        if dtype == DTYPE_FLOAT32:
+            data_bytes = struct.pack('<f', float(value)) + bytes(4)
+        else:
+            raise TypeError(f"Unsupported dtype: {dtype}")
+
+        data_u64 = struct.unpack('<Q', data_bytes)[0]
+        payload_named_value = struct.pack(payload_named_value_format, dtype, name.encode('ascii'), data_u64)
+        payload += payload_named_value
+        
+    header = pack_header(SPKT_M2C_SET_DRONE_PARAMETERS, len(payload))
     return header + payload
 
 
@@ -124,37 +140,40 @@ def unpack_c2m_simple_response(data: bytes) -> SimpleNamespace:
     )
 
 
-def unpack_c2m_drone_imu_data(data: bytes) -> SimpleNamespace:
+def unpack_c2m_drone_log_values(data: bytes) -> SimpleNamespace:
     header = unpack_header(data[:HEADER_SIZE])
-    payload_format = '<qffffff' + str(DRONE_NAME_LENGTH) + 's'
-    time_us, omega_x, omega_y, omega_z, acc_x, acc_y, acc_z, drone_name = struct.unpack(
-        payload_format, data[HEADER_SIZE:])
-    drone_name = drone_name.decode('ascii').rstrip('\0')
-    return SimpleNamespace(
-        pkt_type = SPKT_C2M_DRONE_IMU_DATA,
-        packet_id = header.packet_id,
-        time_us = time_us,
-        omega_x = omega_x,
-        omega_y = omega_y,
-        omega_z = omega_z,
-        acc_x = acc_x,
-        acc_y = acc_y,
-        acc_z = acc_z,
-        drone_name = drone_name
-    )
+    payload_format = '<' + str(DRONE_NAME_LENGTH) + 'sh'
+    drone_name, log_value_count = struct.unpack(payload_format, data[HEADER_SIZE:HEADER_SIZE + struct.calcsize(payload_format)])
+    named_value_size = struct.calcsize(f'<B{NAMED_VALUE_NAME_LENGTH}sQ')
+    offset = HEADER_SIZE + struct.calcsize(payload_format)
+    log_values = []
 
+    for _ in range(log_value_count):
+        dtype, name_bytes, data_u64 = struct.unpack(f'<B{NAMED_VALUE_NAME_LENGTH}sQ', data[offset : offset + named_value_size])
+        data_bytes = struct.pack('<Q', data_u64)
 
-def unpack_c2m_drone_telemetry(data: bytes) -> SimpleNamespace:
-    header = unpack_header(data[:HEADER_SIZE])
-    payload_format = '<qf' + str(DRONE_NAME_LENGTH) + 's'
-    time_us, battery_voltage, drone_name = struct.unpack(
-        payload_format, data[HEADER_SIZE:])
+        if dtype == DTYPE_INT32:
+            value = struct.unpack('<i', data_bytes[:4])[0]
+        elif dtype == DTYPE_FLOAT32:
+            value = struct.unpack('<f', data_bytes[:4])[0]
+        elif dtype == DTYPE_INT64:
+            value = struct.unpack('<q', data_bytes)[0]
+        else:
+            value = data_bytes
+
+        log_values.append(SimpleNamespace(
+            name=name_bytes.decode('ascii').rstrip('\0'),
+            dtype=dtype,
+            value=value,
+        ))
+        
+        offset += named_value_size
+
     return SimpleNamespace(
-        pkt_type        = SPKT_C2M_DRONE_TELEMETRY,
-        packet_id       = header.packet_id,
-        time_us         = time_us,
-        battery_voltage = battery_voltage,
-        drone_name      = drone_name.decode('ascii').rstrip('\0')
+        pkt_type=SPKT_C2M_DRONE_LOG_VALUES,
+        packet_id=header.packet_id,
+        drone_name=drone_name.decode('ascii').rstrip('\0'),
+        log_values=log_values,
     )
 
 
@@ -211,11 +230,10 @@ class CorruptPacketError(Exception):
 
 def unpack_any(data: bytes) -> SimpleNamespace:
     handlers = {
-        SPKT_C2M_SIMPLE_RESPONSE:           unpack_c2m_simple_response,
-        SPKT_C2M_DRONE_INFOS:                unpack_c2m_drone_infos,
-        SPKT_C2M_DRONE_IMU_DATA:             unpack_c2m_drone_imu_data,
-        SPKT_C2M_DRONE_TELEMETRY:            unpack_c2m_drone_telemetry,
-        SPKT_C2M_MSG:                        unpack_c2m_log,
+        SPKT_C2M_SIMPLE_RESPONSE: unpack_c2m_simple_response,
+        SPKT_C2M_DRONE_INFOS: unpack_c2m_drone_infos,
+        SPKT_C2M_DRONE_LOG_VALUES: unpack_c2m_drone_log_values,
+        SPKT_C2M_MSG: unpack_c2m_log,
     }
     _, pkt_type, _, _ = struct.unpack(HEADER_FORMAT, data[:HEADER_SIZE])
     handler = handlers.get(pkt_type)

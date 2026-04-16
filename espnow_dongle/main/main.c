@@ -549,7 +549,7 @@ static void handle_espnow_packet_acknowledge(ESPNow_Send_Event* e_send_event)
         response_to_master = RESPONSE_SUCCESS;
     } break;
 
-    case EPKT_C2D_DRONE_SETTINGS: {
+    case EPKT_C2D_PARAMETERS: {
         response_to_master = RESPONSE_SUCCESS;
     } break;
 
@@ -584,7 +584,7 @@ static void handle_espnow_packet_failed_acknowledge(ESPNow_Send_Event* e_send_ev
     case EPKT_C2D_CONNECT:
     case EPKT_C2D_DISCONNECT:
     case EPKT_C2D_PING:
-    case EPKT_C2D_DRONE_SETTINGS:
+    case EPKT_C2D_PARAMETERS:
         response_to_master = RESPONSE_FAIL;
         break;
 
@@ -960,7 +960,7 @@ static void handle_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_eve
         }
 
         SPacket_C2M_Drone_Log_Values* spkt_c2m_logs = (SPacket_C2M_Drone_Log_Values*) &s_send_event->spkt;
-        memcpy(spkt_c2m_imu_data->drone_name, s_drone_infos[drone_idx].drone_name, DRONE_NAME_LENGTH);
+        memcpy(spkt_c2m_logs->drone_name, s_drone_infos[drone_idx].drone_name, DRONE_NAME_LENGTH);
         spkt_c2m_logs->log_value_count = epkt_d2c_logs->log_value_count;
         memcpy(spkt_c2m_logs->log_values, epkt_d2c_logs->log_values, epkt_d2c_logs->log_value_count * sizeof(Payload_Named_Value));
 
