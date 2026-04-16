@@ -1,4 +1,4 @@
-#ifdef ADC_H_
+#ifndef ADC_H_
 #define ADC_H_
 
 void adc_init(void); //call only (dont know what happens but guard does exist)

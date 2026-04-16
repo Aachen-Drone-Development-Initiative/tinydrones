@@ -1,0 +1,14 @@
+menu "ADC configuration"
+    config BATTERY_GUARD
+        bool "Enable Battery Guard"
+        default y
+        help 
+            Enables periodic checks of battery charge and shutsdown when low.
+
+    config BATTERY_MIN #IMPORTANT gives mV value as float is not supported
+        int "Minimum Voltage"
+        depends on BATTERY_GUARD
+        default 31000
+        help
+            Number given in mV as Kconfig v2 which is currently in use does not support float
+endmenu

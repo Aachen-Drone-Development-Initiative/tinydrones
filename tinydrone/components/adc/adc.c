@@ -1,6 +1,7 @@
 #include "adc.h"
 
 #include "control.h"
+#include "config.h"
 
 #include "esp_adc/adc_oneshot.h"
 #include "freertos/FreeRTOS.h"
@@ -10,11 +11,11 @@
 
 #include <stdbool.h>
 
-#define ADC_CHANNEL ADC1_GPIO35_CHANNEL
+//#define ADC_CHANNEL ADC1_GPIO35_CHANNEL
 
-#define BATTERY_GUARD 1 //if battery voltage should be checked
-#define BATTERY_MIN 3.1f //minimum voltage (in V)
-#define CONTROL_GAP 5000 //time between the task checking the battery again (in ms)
+//#define BATTERY_GUARD 1 //if battery voltage should be checked
+//#define BATTERY_MIN 3.1f //minimum voltage (in V)
+//#define CONTROL_GAP 5000 //time between the task checking the battery again (in ms)
 
 adc_oneshot_unit_handle_t adc_handle;
 bool is_init;
