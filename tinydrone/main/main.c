@@ -15,6 +15,7 @@
 #include "control.h"
 #include "mpu6050.h"
 #include "navigation.h"
+#include "mqtt_setup.h"
 
 #define DEFAULT_TASK_PRIORITY (5)
 #define DEFAULT_TASK_STACK_DEPTH (10000)
@@ -50,11 +51,11 @@ static void tinydrone_task(void *) {
         }
 
         // determine motor signals
-        float u_pitch = pid_control_pitch(attitude.pitch_deg/360.0*2*M_PI, 0.0, 0.5, 0.0, 0.0);
-        float u_roll = pid_control_roll(attitude.roll_deg/360.0*M_PI, 0.0, 0.5, 0.0, 0.0);
+        float u_pitch = pid_control_pitch(attitude.pitch_deg/360.0*2*M_PI, 0.0, 0.6, 0.5, 0.12);
+        float u_roll = pid_control_roll(attitude.roll_deg/360.0*M_PI, 0.0, 0.6, 0.5, 0.12);
         ESP_LOGI("tinydrone_task", "pitch control %f", u_pitch);
         ESP_LOGI("tinydrone_task", "roll control %f", u_roll);
-        Control_Inputs control_inputs = {0.0, u_roll, u_pitch, 0.0};
+        Control_Inputs control_inputs = {0.5, u_roll, u_pitch, 0.0};
         Motor_Values motor_values = control_inputs_to_motor_values(control_inputs);
         motor_values = clip_motor_values(motor_values);
         ESP_ERROR_CHECK(set_motor(1, motor_values.motor_value_1));
@@ -87,28 +88,35 @@ void app_main(void) {
     /* } */
 
 
-    current_attitude_queue = xQueueCreate(1, sizeof(attitude));
-    ESP_ERROR_CHECK(init_motor_driver());
+    // current_attitude_queue = xQueueCreate(1, sizeof(attitude));
+    // ESP_ERROR_CHECK(init_motor_driver());
 
-    // create tinydrone_task
-    TaskHandle_t *tinydrone_task_handle = NULL;
-    BaseType_t ret_td_task_create = xTaskCreatePinnedToCore(
-        tinydrone_task, "tinydrone_task", TINYDRONE_TASK_STACK_DEPTH, NULL,
-        TINYDRONE_TASK_PRIORITY, tinydrone_task_handle, CORE0);
-    if (ret_td_task_create != pdPASS) {
-        printf("ERROR: Failed to create task tinydrone_task...\n");
-    }
+    // // create tinydrone_task
+    // TaskHandle_t *tinydrone_task_handle = NULL;
+    // BaseType_t ret_td_task_create = xTaskCreatePinnedToCore(
+    //     tinydrone_task, "tinydrone_task", TINYDRONE_TASK_STACK_DEPTH, NULL,
+    //     TINYDRONE_TASK_PRIORITY, tinydrone_task_handle, CORE0);
+    // if (ret_td_task_create != pdPASS) {
+    //     printf("ERROR: Failed to create task tinydrone_task...\n");
+    // }
 
-    // create navigation_task
-    TaskHandle_t *navigation_task_handle = NULL;
-    BaseType_t ret_nav_task_create = xTaskCreatePinnedToCore(
-        sensors_task, "navigation_task", DEFAULT_TASK_STACK_DEPTH,
-        &current_attitude_queue, NAVIGATION_TASK_PRIORITY, navigation_task_handle,
-        CORE0);
-    if (ret_nav_task_create != pdPASS) {
-        printf("ERROR: Failed to create task navigation_task...\n");
-    }
+    // // create navigation_task
+    // TaskHandle_t *navigation_task_handle = NULL;
+    // BaseType_t ret_nav_task_create = xTaskCreatePinnedToCore(
+    //     sensors_task, "navigation_task", DEFAULT_TASK_STACK_DEPTH,
+    //     &current_attitude_queue, NAVIGATION_TASK_PRIORITY, navigation_task_handle,
+    //     CORE0);
+    // if (ret_nav_task_create != pdPASS) {
+    //     printf("ERROR: Failed to create task navigation_task...\n");
+    // }
 
 
     // Returning from app_main, deletes the main task (which is now replaced by the 'tinydrone_task')
+
+
+    // MQTT broker initialization
+    // ESP_ERROR_CHECK(nvs_flash_init());
+    // ESP_ERROR_CHECK(esp_netif_init());
+    // ESP_ERROR_CHECK(esp_event_loop_create_default());
+    ESP_ERROR_CHECK(wifi_setup());
 }
