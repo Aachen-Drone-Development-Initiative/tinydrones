@@ -51,12 +51,12 @@ static const int s_espnow_wait_for_ack_resend_timeouts_ms[] = {20, 40, 80, 160, 
 
 static void serial_send_msg_to_master(const char* format, ...);
 
-#define LOG_ERROR(format, ...) serial_send_msg_to_master("ERROR (DONGLE): " format "\n", ##__VA_ARGS__)
+#define LOG_ERROR(format, ...) serial_send_msg_to_master("ERROR (REMOTE): " format "\n", ##__VA_ARGS__)
 
 #define ENABLE_DEBUG_LOGS 1
 
 #if ENABLE_DEBUG_LOGS
-#    define LOG_DEBUG(format, ...) serial_send_msg_to_master("DEBUG (DONGLE): " format "\n", ##__VA_ARGS__)
+#    define LOG_DEBUG(format, ...) serial_send_msg_to_master("DEBUG (REMOTE): " format "\n", ##__VA_ARGS__)
 #else
 #    define LOG_DEBUG(...)
 #endif
@@ -64,7 +64,7 @@ static void serial_send_msg_to_master(const char* format, ...);
 #define ASSERT(condition)                                               \
     do {                                                                \
         if (!(condition)) {                                             \
-            LOG_ERROR("ASSERT FAILED (DONGLE):%s:%d (%s)", __FILE__, __LINE__, #condition); \
+            LOG_ERROR("ASSERT FAILED (REMOTE):%s:%d (%s)", __FILE__, __LINE__, #condition); \
             abort();                                                    \
         }                                                               \
     } while (0)
@@ -269,7 +269,7 @@ static void espnow_init()
     ASSERT(esp_now_add_peer(&peer) == ESP_OK);
 }
 
-static void dongle_init()
+static void remote_init()
 {
     usb_serial_jtag_init();
     nvs_init();
@@ -287,7 +287,7 @@ static void dongle_init()
     ASSERT(esp_timer_create(&periodic_ping_timer_args, &s_periodic_ping_timer) == ESP_OK);
     ASSERT(esp_timer_start_periodic(s_periodic_ping_timer, PING_CONNECTED_DRONE_INTERVAL_MS * 1000) == ESP_OK);
 
-    LOG_DEBUG("Dongle Initialized!");
+    LOG_DEBUG("Remote Initialized!");
 }
 
 static ESPNow_Send_Event* get_unacknowledged_espnow_send_event_from_packet_id(EPacket_ID target_packet_id)
@@ -1299,7 +1299,7 @@ static void send_serial_packet(const Serial_Send_Event* s_send_event)
 
 int app_main(void)
 {
-    dongle_init();
+    remote_init();
 
     while (1) {
         size_t event_size = 0;

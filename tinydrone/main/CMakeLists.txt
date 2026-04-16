@@ -1,9 +1,8 @@
 idf_component_register(SRCS "main.c"
   INCLUDE_DIRS "."
-  INCLUDE_DIRS "../components/logging"
   
   # our components
-  PRIV_REQUIRES espnow_messaging
+  PRIV_REQUIRES remote_comm
   PRIV_REQUIRES motor_driver
   PRIV_REQUIRES mpu6050
 

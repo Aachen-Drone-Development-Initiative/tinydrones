@@ -3,11 +3,11 @@
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_log.h"
 
 // our components
 #include "mpu6050.h"
-#include "espnow_messaging.h"
-#include "logging.h"
+#include "remote_comm.h"
 #include "motor_driver.h"
 
 #define DEFAULT_TASK_PRIORITY    5
@@ -21,7 +21,7 @@ void espnow_update_parameters_callback(const EPacket_C2D_Parameters* epkt_params
     const Payload_Named_Value* params = epkt_params->parameters;
     int16_t param_count = epkt_params->parameter_count;
 
-    espnow_send_log_values_to_controller(params, param_count);
+    remote_comm_send_log_values(params, param_count);
     
     /* for (int i = 0; i < param_count; ++i) */
     /* { */
@@ -57,35 +57,23 @@ void espnow_update_parameters_callback(const EPacket_C2D_Parameters* epkt_params
 
 static void tinydrone_task(void*)
 {
-    espnow_set_espnow_update_parameters_callback(espnow_update_parameters_callback);
-    espnow_block_until_controller_connected();
+    remote_comm_set_update_parameters_callback(espnow_update_parameters_callback);
+    remote_comm_block_until_connected();
     
     while (true)
     {
-        LOG_DEBUG("main loop");
-
-        LOG_ERROR("controller online=%s", espnow_controller_online() ? "true" : "false");
-
         Payload_Controll_Commands ctrl_cmds;
-        espnow_get_latest_controll_commands(&ctrl_cmds);
-
-        if (ctrl_cmds.flags & CTRL_CMD_FLAG_IS_ARMED) {
-            CONTR_LOG_DEBUG("is armed!");
-            //...
-        }
-        else {
-            CONTR_LOG_DEBUG("not armed.");
-        }
+        remote_comm_get_latest_controll_commands(&ctrl_cmds);
 
         /* float acc_x = 1.3, acc_y = 432.3, acc_z = 34.2; */
 
         /* Payload_Named_Value log_values[] = { */
-        /*     espnow_create_named_value("acc_x", DTYPE_FLOAT32, &acc_x), */
-        /*     espnow_create_named_value("acc_y", DTYPE_FLOAT32, &acc_y), */
-        /*     espnow_create_named_value("acc_z", DTYPE_FLOAT32, &acc_z), */
+        /*     remote_comm_create_named_value("acc_x", DTYPE_FLOAT32, &acc_x), */
+        /*     remote_comm_create_named_value("acc_y", DTYPE_FLOAT32, &acc_y), */
+        /*     remote_comm_create_named_value("acc_z", DTYPE_FLOAT32, &acc_z), */
         /* }; */
         
-        /* espnow_send_log_values_to_controller(log_values, 3); */
+        /* remote_comm_send_log_values(log_values, 3); */
         
         vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -134,13 +122,13 @@ static esp_err_t tinydrone_init(gpio_num_t i2c_sda,
 
     // Init espnow messaging
     
-    Espnow_Messaging_Config espnow_msg_config = {
+    Remote_Comm_Config remote_comm_config = {
         .long_range_wifi = false,
         .task_priority   = DEFAULT_TASK_PRIORITY,
         .task_stack_size = DEFAULT_TASK_STACK_DEPTH * 10,
     };
     
-    espnow_init(&espnow_msg_config);
+    remote_comm_init(&remote_comm_config);
 
     return ESP_OK;
 }
@@ -151,7 +139,7 @@ void app_main(void)
                                         GPIO_NUM_10); // i2c_scl
 
     if (ret_init != ESP_OK) {
-        LOG_ERROR("tinydrone_init() failed, halting...\n");
+        ESP_LOGE("APP_MAIN", "tinydrone_init() failed, halting...\n");
         abort();
     }
 
@@ -165,7 +153,7 @@ void app_main(void)
                                              tinydrone_task_handle);
     
     if (ret_task_create != pdPASS) {
-        LOG_ERROR("Failed to create tinydrone_task, halting...\n");
+        ESP_LOGE("APP_MAIN", "Failed to create tinydrone_task, halting...\n");
         abort();
     }
 

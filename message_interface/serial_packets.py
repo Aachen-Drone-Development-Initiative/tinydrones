@@ -88,9 +88,9 @@ def pack_m2c_set_drone_parameters(drone_name: str, parameters: list[tuple[str, i
 
         if dtype == DTYPE_INT32:
             data_bytes = struct.pack('<i', int(value)) + bytes(4)
-        if dtype == DTYPE_INT64:
+        elif dtype == DTYPE_INT64:
             data_bytes = struct.pack('<Q', int(value))
-        if dtype == DTYPE_FLOAT32:
+        elif dtype == DTYPE_FLOAT32:
             data_bytes = struct.pack('<f', float(value)) + bytes(4)
         else:
             raise TypeError(f"Unsupported dtype: {dtype}")

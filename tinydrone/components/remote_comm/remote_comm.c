@@ -1,7 +1,4 @@
-#include "espnow_messaging.h"
-
-// our components
-#include "logging.h"
+#include "remote_comm.h"
 
 #include <string.h>
 #include <stdarg.h>
@@ -14,6 +11,7 @@
 #include "esp_now.h"
 #include "esp_random.h"
 #include "esp_timer.h"
+#include "esp_log.h"
 
 // The packets life in this queue, so it should be rather big
 #define EVENT_RINGBUF_SIZE (1024 * 20)
@@ -45,6 +43,44 @@ const int espnow_wait_for_ack_resend_timeouts_ms[] = {20, 40, 80, 160, 320};
 #define ESPNOW_WIFI_MODE WIFI_MODE_STA // The drone should be in station mode (STA), because it connects to the controllers access point (AP).
 #define ESPNOW_WIFI_IF   ESP_IF_WIFI_STA // We want to use the station interface (IF).
 #define ESPNOW_SEND_COOLDOWN_WHEN_ESPNOW_ERR_OUT_OF_MEM pdMS_TO_TICKS(100)
+
+#define REMOTE_COMM_TAG "REM_COMM"
+
+#define LOG_ERROR(format, ...)                      \
+    do {                                            \
+        ESP_LOGE(REMOTE_COMM_TAG, format, ##__VA_ARGS__);  \
+    } while (0);
+
+// Also send the error message to the controller
+#define CONTR_LOG_ERROR(format, ...)                                    \
+    do {                                                                \
+        remote_comm_printf("ERROR (TINYDRONE): " format "\n", ##__VA_ARGS__); \
+        ESP_LOGE(REMOTE_COMM_TAG, format, ##__VA_ARGS__);                      \
+    } while (0);
+
+
+#define TINYDRONE_ENABLE_DEBUG_LOGS 1
+
+#if TINYDRONE_ENABLE_DEBUG_LOGS
+
+#define LOG_DEBUG(format, ...)                      \
+    do {                                            \
+        ESP_LOGI(REMOTE_COMM_TAG, format, ##__VA_ARGS__);  \
+    } while (0);
+
+// Also send the debug message to the controller
+#define CONTR_LOG_DEBUG(format, ...)                                    \
+    do {                                                                \
+        remote_comm_printf("DEBUG (TINYDRONE): " format "\n", ##__VA_ARGS__); \
+        ESP_LOGI(REMOTE_COMM_TAG, format, ##__VA_ARGS__);                      \
+    } while (0);
+
+#else
+
+#define LOG_DEBUG(...)
+#define CONTR_LOG_DEBUG(...)
+
+#endif
 
 // Sending to this 'mac address' means sending to all ESPs in range.
 static const uint8_t broadcast_mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
@@ -110,7 +146,7 @@ static esp_timer_handle_t s_periodic_advertise_timer = NULL;
 
 static int64_t s_time_of_last_espnow_err_out_of_memory_us = 0;
 
-static espnow_update_parameters_callback_t s_update_parameters_callback = NULL;
+static remote_comm_update_parameters_callback_t s_update_parameters_callback = NULL;
 
 static ESPNow_Send_Event* get_unacknowledged_espnow_send_event_from_packet_id(EPacket_ID target_packet_id)
 {
@@ -271,7 +307,7 @@ static ESPNow_Send_Event* espnow_send_event_acquire(const uint8_t* dest_mac_addr
 {
     ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_raw(dest_mac_addr, packet_size, EVENT_RINGBUF_ACQUIRE_TICKS_TO_WAIT_FOR_MAIN_TASK);
     if (e_send_event) {
-        e_send_event->epkt.header = espnow_header_create(type, packet_size, flags);
+        e_send_event->epkt.header = remote_comm_create_packet_header(type, packet_size, flags);
     }
 
     return e_send_event;
@@ -602,7 +638,7 @@ static void resend_unacknowledged_espnow_packet(ESPNow_Resend_Unacknowledged_Eve
 }
 
 // Main task
-static void espnow_messaging_task(void*)
+static void remote_comm_task(void*)
 {    
     while (1)
     {
@@ -637,7 +673,7 @@ static void espnow_messaging_task(void*)
 // Public API implementation
 
 
-void espnow_init(const Espnow_Messaging_Config* config)
+void remote_comm_init(const Remote_Comm_Config* config)
 {
     // Init wifi
     
@@ -688,16 +724,16 @@ void espnow_init(const Espnow_Messaging_Config* config)
     // Starting the espnow messaging task
     
     TaskHandle_t task_handle = NULL; // We don't keep the task handle, because we don't need it.
-    xTaskCreate(espnow_messaging_task, "espnow_messaging_task", config->task_stack_size, NULL, config->task_priority, &task_handle);
+    xTaskCreate(remote_comm_task, "remote_comm_task", config->task_stack_size, NULL, config->task_priority, &task_handle);
     assert(task_handle);
 }
 
-void espnow_deinit()
+void remote_comm_deinit()
 {
     return; // TODO
 }
 
-void espnow_block_until_controller_connected()
+void remote_comm_block_until_connected()
 {
     while (1)
     {
@@ -710,22 +746,22 @@ void espnow_block_until_controller_connected()
     }
 }
 
-bool espnow_controller_connected()
+bool remote_comm_connected()
 {
     return get_controller_connected();
 }
 
-bool espnow_controller_online()
+bool remote_comm_online()
 {
     return !is_controller_offline();
 }
 
-void espnow_get_latest_controll_commands(Payload_Controll_Commands* out)
+void remote_comm_get_latest_controll_commands(Payload_Controll_Commands* out)
 {
     *out = get_control_commands();
 }
 
-EHeader espnow_header_create(EPacket_Type type, size_t packet_size, EPacket_Flags flags)
+EHeader remote_comm_create_packet_header(EPacket_Type type, size_t packet_size, EPacket_Flags flags)
 {
     assert(packet_size >= sizeof(EPacket));
 
@@ -742,25 +778,25 @@ EHeader espnow_header_create(EPacket_Type type, size_t packet_size, EPacket_Flag
     };
 }
 
-Espnow_Messaging_Ret espnow_send_packet_to_controller(EPacket* epkt)
+Remote_Comm_Ret remote_comm_send_packet(EPacket* epkt)
 {
-    if (!get_controller_connected()) return ESPNOW_MSG_ERR_CONTROLLER_DISCONNECTED;
-    if (is_controller_offline())     return ESPNOW_MSG_ERR_CONTROLLER_OFFLINE;
+    if (!get_controller_connected()) return REMOTE_COMM_ERR_CONTROLLER_DISCONNECTED;
+    if (is_controller_offline())     return REMOTE_COMM_ERR_CONTROLLER_OFFLINE;
 
     size_t epkt_size = espnow_packet_size(epkt->header);
     ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_raw(s_controller.mac_addr, epkt_size, EVENT_RINGBUF_ACQUIRE_TICKS_TO_WAIT_FOR_OTHER_TASK);
     if (e_send_event) {
         memcpy(&e_send_event->epkt, epkt, epkt_size);
         espnow_send_event_complete(e_send_event);
-        return ESPNOW_MSG_OK;
+        return REMOTE_COMM_OK;
     }
-    return ESPNOW_MSG_ERR_ESP_NOW_SEND_FAIL;
+    return REMOTE_COMM_ERR_ESP_NOW_SEND_FAIL;
 }
 
-Espnow_Messaging_Ret espnow_send_msg_to_controller(const char* format, ...)
+Remote_Comm_Ret remote_comm_printf(const char* format, ...)
 {
-    if (!get_controller_connected()) return ESPNOW_MSG_ERR_CONTROLLER_DISCONNECTED;
-    if (is_controller_offline())     return ESPNOW_MSG_ERR_CONTROLLER_OFFLINE;
+    if (!get_controller_connected()) return REMOTE_COMM_ERR_CONTROLLER_DISCONNECTED;
+    if (is_controller_offline())     return REMOTE_COMM_ERR_CONTROLLER_OFFLINE;
     
     // Importantly we don't log any errors that might occur in this function!
     va_list args;
@@ -781,17 +817,17 @@ Espnow_Messaging_Ret espnow_send_msg_to_controller(const char* format, ...)
     }
 
     size_t packet_size = sizeof(EPacket_D2C_Msg) + log_msg_size;
-    epkt_log->header = espnow_header_create(EPKT_D2C_MSG, packet_size, 0);
+    epkt_log->header = remote_comm_create_packet_header(EPKT_D2C_MSG, packet_size, 0);
 
     esp_err_t ret = esp_now_send(s_controller.mac_addr, (uint8_t*) epkt_log, packet_size);
     if (ret != ESP_OK) {
-        LOG_ERROR("espnow_send_msg_to_controller: Failed to send espnow packet, ESP_ERR: %s", esp_err_to_name(ret));
-        return ESPNOW_MSG_ERR_ESP_NOW_SEND_FAIL;
+        LOG_ERROR("remote_comm_printf: Failed to send espnow packet, ESP_ERR: %s", esp_err_to_name(ret));
+        return REMOTE_COMM_ERR_ESP_NOW_SEND_FAIL;
     }
-    return ESPNOW_MSG_OK;
+    return REMOTE_COMM_OK;
 }
 
-void espnow_set_espnow_update_parameters_callback(espnow_update_parameters_callback_t callback)
+void remote_comm_set_update_parameters_callback(remote_comm_update_parameters_callback_t callback)
 {
     // TODO (yuzeni) maybe make this thread safe with atomics or a mutex.
     s_update_parameters_callback = callback;
@@ -807,7 +843,7 @@ static inline size_t get_dtype_size(uint8_t dtype)
     return 0;
 }
 
-bool espnow_expect_parameter(const EPacket_C2D_Parameters* epkt_params, const char* name, void* value_out)
+bool remote_comm_expect_parameter(const EPacket_C2D_Parameters* epkt_params, const char* name, void* value_out)
 {
     const Payload_Named_Value* params = epkt_params->parameters;
     int16_t param_count = epkt_params->parameter_count;
@@ -821,7 +857,7 @@ bool espnow_expect_parameter(const EPacket_C2D_Parameters* epkt_params, const ch
     return false;
 }
 
-Payload_Named_Value espnow_create_named_value(const char* name, uint8_t dtype, void* value_in)
+Payload_Named_Value remote_comm_create_named_value(const char* name, uint8_t dtype, void* value_in)
 {
     Payload_Named_Value named_value = {0};
     size_t dtype_size = get_dtype_size(dtype);
@@ -836,28 +872,28 @@ Payload_Named_Value espnow_create_named_value(const char* name, uint8_t dtype, v
     return named_value;
 }
 
-Espnow_Messaging_Ret espnow_send_log_values_to_controller(const Payload_Named_Value* log_values, int log_value_count)
+Remote_Comm_Ret remote_comm_send_log_values(const Payload_Named_Value* log_values, int log_value_count)
 {
-    if (log_value_count < 0)                              return ESPNOW_MSG_OK;
-    if (log_value_count > 0 && log_values == NULL)        return ESPNOW_MSG_ERR_ARG;
-    if (log_value_count > EPKT_MAX_LOG_VALUES_PER_PACKET) return ESPNOW_MSG_ERR_PACKET_TOO_LARGE;
+    if (log_value_count < 0)                              return REMOTE_COMM_OK;
+    if (log_value_count > 0 && log_values == NULL)        return REMOTE_COMM_ERR_ARG;
+    if (log_value_count > EPKT_MAX_LOG_VALUES_PER_PACKET) return REMOTE_COMM_ERR_PACKET_TOO_LARGE;
     
-    if (!get_controller_connected()) return ESPNOW_MSG_ERR_CONTROLLER_DISCONNECTED;
-    if (is_controller_offline())     return ESPNOW_MSG_ERR_CONTROLLER_OFFLINE;
+    if (!get_controller_connected()) return REMOTE_COMM_ERR_CONTROLLER_DISCONNECTED;
+    if (is_controller_offline())     return REMOTE_COMM_ERR_CONTROLLER_OFFLINE;
 
     size_t epkt_size = sizeof(EPacket_D2C_Log_Values) + log_value_count * sizeof(Payload_Named_Value);
     ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_raw(s_controller.mac_addr, epkt_size, EVENT_RINGBUF_ACQUIRE_TICKS_TO_WAIT_FOR_OTHER_TASK);
     if (e_send_event)
     {
         EPacket_D2C_Log_Values* pkt_log_vals = (EPacket_D2C_Log_Values*) &e_send_event->epkt;
-        pkt_log_vals->header = espnow_header_create(EPKT_D2C_LOG_VALUES, epkt_size, 0);
+        pkt_log_vals->header = remote_comm_create_packet_header(EPKT_D2C_LOG_VALUES, epkt_size, 0);
         
         pkt_log_vals->log_value_count = log_value_count;
         memcpy(pkt_log_vals->log_values, log_values, log_value_count * sizeof(Payload_Named_Value));
         espnow_send_event_complete(e_send_event);
             
-        return ESPNOW_MSG_OK;
+        return REMOTE_COMM_OK;
     }
 
-    return ESPNOW_MSG_ERR_ESP_NOW_SEND_FAIL;
+    return REMOTE_COMM_ERR_ESP_NOW_SEND_FAIL;
 }

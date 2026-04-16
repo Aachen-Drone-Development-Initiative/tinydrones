@@ -1,7 +1,7 @@
 #pragma once
 
 #include "esp_log.h"
-#include "espnow_messaging.h"
+#include "remote_comm.h"
 
 #define TINY_TAG "TINY"
 

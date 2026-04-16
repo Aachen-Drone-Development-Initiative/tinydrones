@@ -1,7 +1,6 @@
-idf_component_register(SRCS "espnow_messaging.c"
+idf_component_register(SRCS "remote_comm.c"
   INCLUDE_DIRS "include"
   INCLUDE_DIRS "../../../message_interface"
-  INCLUDE_DIRS "../logging"
 
   # our components
 
