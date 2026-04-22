@@ -1,8 +1,25 @@
 #ifndef ADC_H_
 #define ADC_H_
 
-void adc_init(void); //call only (dont know what happens but guard does exist)
+
+/*
+ * initializes adc unit & channel for battery voltage
+ * should only be called once
+ */
+void adc_init(void); 
+
+/*
+ * Entry point for the battery checking task
+ * call something like 
+ * `xTaskCreate(battery_check_task, "BATTERY CHECK TASK", 512, 10, &xHandle);`
+ *
+ * This is only an example task creation call
+ */ 
 void battery_check_task(void); //call as task
-float get_voltage(void); //in V
+
+/*
+ * returns battery voltage in V
+ */
+float get_battery_voltage(void); //in V
 
 #endif

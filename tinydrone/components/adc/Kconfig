@@ -11,4 +11,10 @@ menu "ADC configuration"
         default 31000
         help
             Number given in mV as Kconfig v2 which is currently in use does not support float
+
+    config BATTERY_CHECK_PERIOD
+        int "Battery check period"
+        default 5000
+        help 
+          Number of ms between automatic battery voltage checks
 endmenu
