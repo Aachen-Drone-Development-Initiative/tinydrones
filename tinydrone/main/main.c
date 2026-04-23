@@ -1,6 +1,7 @@
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "esp_log.h"
+#include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/projdefs.h"
 #include "freertos/task.h"
@@ -10,7 +11,7 @@
 #include <stdio.h>
 
 // our components
-#include "controller_communication.h"
+#include "remote_comm.h"
 #include "motor_driver.h"
 #include "control.h"
 #include "mpu6050.h"
@@ -28,14 +29,62 @@
 // else define it as tskNO_AFFINITY
 #define CORE1 ((CONFIG_FREERTOS_NUMBER_OF_CORES > 1) ? 1 : tskNO_AFFINITY)
 
+void espnow_update_parameters_callback(const EPacket_C2D_Parameters* epkt_params)
+{
+    const Payload_Named_Value* params = epkt_params->parameters;
+    int16_t param_count = epkt_params->parameter_count;
+
+    remote_comm_send_log_values(params, param_count);
+
+    /* for (int i = 0; i < param_count; ++i) */
+    /* { */
+    /*     CONTR_LOG_DEBUG("param_name=%.*s", NAMED_VALUE_NAME_LENGTH, params[i].name); */
+
+    /*     switch (params[i].dtype) { */
+    /*     case DTYPE_INT32: { */
+    /*         int32_t value = 0; */
+    /*         memcpy(&value, &params[i].data, sizeof(value)); */
+    /*         CONTR_LOG_DEBUG("param_value=%d", value); */
+    /*     } break; */
+
+    /*     case DTYPE_INT64: { */
+    /*         int64_t value = 0; */
+    /*         memcpy(&value, &params[i].data, sizeof(value)); */
+    /*         CONTR_LOG_DEBUG("param_value=%lld", (long long) value); */
+    /*     } break; */
+
+    /*     case DTYPE_FLOAT32: { */
+    /*         float value = 0; */
+    /*         memcpy(&value, &params[i].data, sizeof(value)); */
+    /*         CONTR_LOG_DEBUG("param_value=%f", value); */
+    /*     } break; */
+
+    /*     default: */
+    /*         CONTR_LOG_DEBUG("param_value=<unknown dtype %u>", params[i].dtype); */
+    /*         break; */
+
+    /*     } */
+
+    /* } */
+}
 static QueueHandle_t current_attitude_queue;
 
-static void tinydrone_task(void *) {
+static void tinydrone_task(void*)
+{
+
     const float frequency_in_hz = 10.0;
     TickType_t xLastWakeTime = xTaskGetTickCount();
 
     int time = 0;
+
+    remote_comm_set_update_parameters_callback(espnow_update_parameters_callback);
+    // remote_comm_block_until_connected();
+
     while (true) {
+        // get controll command
+        Payload_Controll_Commands ctrl_cmds;
+        remote_comm_get_latest_controll_commands(&ctrl_cmds);
+
         // estimate orientation using IMU-component
         attitude attitude;
         int ticks_to_wait = pdMS_TO_TICKS(1000 / frequency_in_hz);
@@ -98,6 +147,25 @@ void app_main(void) {
     if (ret_td_task_create != pdPASS) {
         printf("ERROR: Failed to create task tinydrone_task...\n");
     }
+
+    // init NVS (non volatile storage) (required by ESPNow)
+    {
+        esp_err_t ret = nvs_flash_init();
+        if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+            assert(nvs_flash_erase() == ESP_OK);
+            ret = nvs_flash_init();
+        }
+        assert(ret == ESP_OK);
+    }
+
+    // Init espnow messaging
+    Remote_Comm_Config remote_comm_config = {
+        .long_range_wifi = false,
+        .task_priority   = DEFAULT_TASK_PRIORITY,
+        .task_stack_size = DEFAULT_TASK_STACK_DEPTH,
+    };
+
+    remote_comm_init(&remote_comm_config);
 
     // create navigation_task
     TaskHandle_t *navigation_task_handle = NULL;

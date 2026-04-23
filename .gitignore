@@ -1,3 +1,7 @@
 sdkconfig*
 .vscode/
 todo.txt
+test.py
+.cache/
+__pycache__/
+AGENTS.md

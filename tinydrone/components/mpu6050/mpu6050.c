@@ -51,10 +51,10 @@ esp_err_t mpu6050_init(MPU6050_Handle* mpu, i2c_master_bus_handle_t master_bus, 
     if (!mpu6050_set_register(mpu, REG_PWR_MGMT_1, 0x00)) return ESP_FAIL; // wake up the MPU6050 by writing 0 to PWR_MGMT_1 register
 
     // specify sample rate
-    // sample rate = (gyro output rate - 8 Khz) / (value at REG_SMPLRT_DIV + 1)
-    // REG_SMPLRT_DIV == 0x00 => max sample rate
-    // WARNING: The output rate of the accelerometer is just 1 Khz, so if we query at 8 Khz, accel values will repeat
-    if (!mpu6050_set_register(mpu, REG_SMPLRT_DIV, 0x00)) return ESP_FAIL;
+    // sample rate = (gyro output rate (8 Khz)) / (value at REG_SMPLRT_DIV + 1)
+    // REG_SMPLRT_DIV == 0x07 => 1 KHz
+    // The output rate of the accelerometer is just 1 Khz, so we cap it there.
+    if (!mpu6050_set_register(mpu, REG_SMPLRT_DIV, 0x07)) return ESP_FAIL;
 
     // specify range
     if (!mpu6050_set_register(mpu, REG_GYRO_CONFIG, (uint8_t) gyro_range)) return ESP_FAIL;
