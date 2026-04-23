@@ -146,7 +146,7 @@ def unpack_c2m_drone_log_values(data: bytes) -> SimpleNamespace:
     drone_name, log_value_count = struct.unpack(payload_format, data[HEADER_SIZE:HEADER_SIZE + struct.calcsize(payload_format)])
     named_value_size = struct.calcsize(f'<B{NAMED_VALUE_NAME_LENGTH}sQ')
     offset = HEADER_SIZE + struct.calcsize(payload_format)
-    log_values = []
+    log_values = SimpleNamespace()
 
     for _ in range(log_value_count):
         dtype, name_bytes, data_u64 = struct.unpack(f'<B{NAMED_VALUE_NAME_LENGTH}sQ', data[offset : offset + named_value_size])
@@ -161,12 +161,7 @@ def unpack_c2m_drone_log_values(data: bytes) -> SimpleNamespace:
         else:
             value = data_bytes
 
-        log_values.append(SimpleNamespace(
-            name=name_bytes.decode('ascii').rstrip('\0'),
-            dtype=dtype,
-            value=value,
-        ))
-        
+        setattr(log_values, name_bytes.decode('ascii').rstrip('\0'), value)
         offset += named_value_size
 
     return SimpleNamespace(
