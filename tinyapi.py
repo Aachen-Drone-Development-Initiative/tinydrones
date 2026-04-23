@@ -234,6 +234,11 @@ def set_drone_parameters(drone_name: str, named_params: list[tuple[str, int, any
         raise CorruptPacketError(f"Unexpected response '{c2m_response.response}'")
 
 
+def set_drone_parameter(drone_name: str, param_name: str, dtype: int, value: any):
+    """Send a single parameter to a drone."""
+    set_drone_parameters(drone_name, [(param_name, dtype, value)])
+
+
 def monitor():
     """Continuously read packets and print them. Stop with Ctrl-C."""
     try:
