@@ -17,12 +17,10 @@
 // General
 
 // ADC Settings
-#define ADC_CHANNEL ADC1_GPIO5_CHANNEL
-
-#define BATTERY_GUARD                                                          \
-  CONFIG_BATTERY_GUARD   // if battery voltage should be checked
-#define BATTERY_MIN 3.1f // minimum voltage (in V)
-#define CONTROL_GAP                                                            \
-  5000 // time between the task checking the battery again (in ms)
+//#define ADC_CHANNEL ADC1_GPIO35_CHANNEL
+//
+//#define BATTERY_GUARD CONFIG_BATTERY_GUARD //if battery voltage should be checked
+//#define BATTERY_MIN 3.1f //minimum voltage (in V)
+//#define CONTROL_GAP 5000 //time between the task checking the battery again (in ms)
 
 #endif
