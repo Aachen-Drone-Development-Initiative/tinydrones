@@ -2,6 +2,8 @@
 
 #include "control.h"
 
+#include "esp_adc/adc_cali.h"
+#include "esp_adc/adc_cali_scheme.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -15,7 +17,7 @@
 #include <stdbool.h>
 
 // TODO: See if this can be moved to Kconfig
-#define ADC_CHANNEL ADC1_CHANNEL_1_GPIO_NUM
+#define ADC_CHANNEL ADC_CHANNEL_1 // Should be GPIO2 according to schematic
 
 #define BATTERY_GUARD CONFIG_BATTERY_GUARD
 #define BATTERY_CHECK_PERIOD CONFIG_BATTERY_CHECK_PERIOD
@@ -23,6 +25,19 @@
 
 static adc_oneshot_unit_handle_t adc_handle;
 static bool is_init = false;
+static adc_cali_handle_t handle;
+
+static void createAdcCalibration() {
+  adc_cali_line_fitting_config_t config = {
+    .atten  = ADC_ATTEN_DB_12,
+    .bitwidth = ADC_BITWIDTH_13,
+    .unit_id = ADC_UNIT_1
+  };
+
+  ESP_ERROR_CHECK(adc_cali_create_scheme_line_fitting(&config, &handle));
+
+}
+
 
 void adc_init() {
   if (is_init) {
@@ -38,23 +53,32 @@ void adc_init() {
 
   ESP_ERROR_CHECK(adc_oneshot_new_unit(&unit_init_config, &adc_handle));
 
-  // TODO: Figure out why ADC_BITWIDTH_12 doesnt work
+  // The Bitwidth might cause problems on other esp chips. For esp32s2, bitwidth is fixed 13 bit.
   // Remeber to change get_batter calculation if changing bitwidth
   adc_oneshot_chan_cfg_t channel_config = {
       .atten = ADC_ATTEN_DB_12,
-      .bitwidth = ADC_BITWIDTH_12,
+      .bitwidth = ADC_BITWIDTH_13,
   };
 
   ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle, ADC_CHANNEL, &channel_config));
+
+  createAdcCalibration();
 }
 
 float get_battery_voltage() {
   int raw;
   adc_oneshot_read(adc_handle, ADC_CHANNEL, &raw);
-  float end_res = (((float)raw) / 4095.0f) * 1.1f * 4.0f * 2; // scale by 2 for voltage divider
-  return end_res;
+  
+  int res;
+  adc_cali_raw_to_voltage(handle, raw, &res);
+
+  
+  return (((float) res ) / 1000.0f) * 2; // scale by 2 cause of voltage divider
 }
 
+
+// TODO: This should take at least 3 measurements before shutting shutdown
+// TODO: Add warning before shutting down
 void battery_check_task() {
   while (BATTERY_GUARD) {
     vTaskDelay(pdMS_TO_TICKS(BATTERY_CHECK_PERIOD));
