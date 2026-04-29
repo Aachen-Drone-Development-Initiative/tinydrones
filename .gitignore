@@ -1,7 +1,11 @@
-sdkconfig*
+sdkconfig
+sdkconfig.old
 .vscode/
+build/
 todo.txt
 test.py
 .cache/
 __pycache__/
+dependencies.lock
+.venv/
 AGENTS.md
