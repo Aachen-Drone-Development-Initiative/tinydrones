@@ -15,6 +15,7 @@
 #include "soc/adc_channel.h"
 
 #include <stdbool.h>
+#include <stdint.h>
 
 // TODO: See if this can be moved to Kconfig
 #define ADC_CHANNEL ADC_CHANNEL_1 // Should be GPIO2 according to schematic
@@ -26,6 +27,7 @@
 static adc_oneshot_unit_handle_t adc_handle;
 static bool is_init = false;
 static adc_cali_handle_t handle;
+static uint8_t strikes = 0;
 
 static void createAdcCalibration() {
   adc_cali_line_fitting_config_t config = {
@@ -69,25 +71,30 @@ float get_battery_voltage() {
   int raw;
   adc_oneshot_read(adc_handle, ADC_CHANNEL, &raw);
   
-  int res;
-  adc_cali_raw_to_voltage(handle, raw, &res);
+  int battery_voltage_mv;
+  adc_cali_raw_to_voltage(handle, raw, &battery_voltage_mv);
 
   
-  return (((float) res ) / 1000.0f) * 2; // scale by 2 cause of voltage divider
+  return (((float) battery_voltage_mv ) / 1000.0f) * 2; // scale by 2 cause of voltage divider
 }
 
 
-// TODO: This should take at least 3 measurements before shutting shutdown
-// TODO: Add warning before shutting down
+// TODO: Maybe this should be a callback on a timer instead of a task (discuss)
 void battery_check_task() {
   while (BATTERY_GUARD) {
     vTaskDelay(pdMS_TO_TICKS(BATTERY_CHECK_PERIOD));
     float battery_voltage = get_battery_voltage();
     ESP_LOGI("battery", "Battery Voltage: %f", battery_voltage);
     if (battery_voltage <= BATTERY_MIN) {
-      ESP_LOGE("battery", "Voltage Dropped below BATTERY_MIN");
-      shutdown();
+      if (strikes >= 3) {
+        ESP_LOGE("battery", "Voltage Dropped below BATTERY_MIN");
+        shutdown();
+      } else {
+        ESP_LOGW("battery", "Battery voltage measured low: %fV", battery_voltage);
+        strikes++;
+      }
+    } else {
+      strikes = 0;
     }
-    vTaskDelete(NULL);
   }
 }
