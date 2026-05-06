@@ -22,18 +22,18 @@
 
 #define BATTERY_GUARD CONFIG_BATTERY_GUARD
 #define BATTERY_CHECK_PERIOD CONFIG_BATTERY_CHECK_PERIOD
-#define BATTERY_MIN CONFIG_BATTERY_MIN
+#define BATTERY_MIN ((float) CONFIG_BATTERY_MIN) / 1000
 
 static adc_oneshot_unit_handle_t adc_handle;
 static bool is_init = false;
 static adc_cali_handle_t handle;
 static uint8_t strikes = 0;
 
-static void createAdcCalibration() {
+static void createAdcCalibration(adc_oneshot_chan_cfg_t * channel_config, adc_oneshot_unit_init_cfg_t *unit_config) {
   adc_cali_line_fitting_config_t config = {
-    .atten  = ADC_ATTEN_DB_12,
-    .bitwidth = ADC_BITWIDTH_13,
-    .unit_id = ADC_UNIT_1
+    .atten  = channel_config->atten,
+    .bitwidth = channel_config->bitwidth,
+    .unit_id = unit_config->unit_id
   };
 
   ESP_ERROR_CHECK(adc_cali_create_scheme_line_fitting(&config, &handle));
@@ -64,7 +64,7 @@ void adc_init() {
 
   ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle, ADC_CHANNEL, &channel_config));
 
-  createAdcCalibration();
+  createAdcCalibration(&channel_config, &unit_init_config);
 }
 
 float get_battery_voltage() {
@@ -74,21 +74,23 @@ float get_battery_voltage() {
   int battery_voltage_mv;
   adc_cali_raw_to_voltage(handle, raw, &battery_voltage_mv);
 
-  
   return (((float) battery_voltage_mv ) / 1000.0f) * 2; // scale by 2 cause of voltage divider
 }
 
 
-// TODO: Maybe this should be a callback on a timer instead of a task (discuss)
 void battery_check_task() {
-  while (BATTERY_GUARD) {
+  while (1) {
     vTaskDelay(pdMS_TO_TICKS(BATTERY_CHECK_PERIOD));
     float battery_voltage = get_battery_voltage();
-    ESP_LOGI("battery", "Battery Voltage: %f", battery_voltage);
+    ESP_LOGD("battery", "Battery Voltage: %f", battery_voltage);
     if (battery_voltage <= BATTERY_MIN) {
       if (strikes >= 3) {
-        ESP_LOGE("battery", "Voltage Dropped below BATTERY_MIN");
-        shutdown();
+        ESP_LOGE("battery", "Voltage Dropped below BATTERY_MIN! Shutting Down.");
+        if (BATTERY_GUARD) {
+          shutdown();
+        } else {
+          ESP_LOGD("battery", "Drone would shutdown but BATTERY_GUARD isnt set");
+        }
       } else {
         ESP_LOGW("battery", "Battery voltage measured low: %fV", battery_voltage);
         strikes++;
@@ -98,3 +100,5 @@ void battery_check_task() {
     }
   }
 }
+
+  
