@@ -456,8 +456,11 @@ static void handle_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_eve
         set_time_since_last_c2d_packet_us(esp_timer_get_time());
     }
 
-    if (!from_controller && epkt->header.type != EPKT_C2D_CONNECT) {
-        CONTR_LOG_ERROR("handle_incoming_espnow_packet: Received packet of type '%d' from unknow sender, which is not allowed.", epkt->header.type);
+    if (!from_controller && epkt->header.type != EPKT_C2D_CONNECT)
+    {
+        if (epkt->header.type != EPKT_D2C_ADVERTISE) {
+            CONTR_LOG_ERROR("handle_incoming_espnow_packet: Received an unexpected packet of type '%d' from unknow sender.", epkt->header.type);
+        }
         return;
     }
     
