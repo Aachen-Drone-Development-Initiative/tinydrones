@@ -6,10 +6,10 @@
 #define LEDC_TIMER              LEDC_TIMER_0
 #define LEDC_MODE               LEDC_LOW_SPEED_MODE
 
-#define MOTOR_DRIVER_ARMED_DUTY         (100)
+#define MOTOR_DRIVER_ARMED_DUTY         CONFIG_MOTOR_DRIVER_ARMED_DUTY_CYCLE // Duty Cycle when Armed but idling
 #define MOTOR_DRIVER_DUTY_RES           LEDC_TIMER_13_BIT // Set duty resolution to 13 bits TODO
-#define MOTOR_DRIVER_MAX_DUTY           (8192) // = 2^13 TODO
-#define MOTOR_DRIVER_FREQUENCY          (4000) // Frequency in Hertz. Set frequency at 4 kHz
+#define MOTOR_DRIVER_MAX_DUTY           CONFIG_MOTOR_DRIVER_MAX_DUTY_CYCLE // = 2^13 TODO
+#define MOTOR_DRIVER_FREQUENCY          CONFIG_MOTOR_DRIVER_PWM_FREQUENCY // Frequency in Hertz. Set frequency at 4 kHz
 
 struct motor {
     int motor_id;

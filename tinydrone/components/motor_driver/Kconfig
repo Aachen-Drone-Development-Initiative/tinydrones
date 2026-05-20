@@ -1,0 +1,19 @@
+menu "Motor Control"
+    config MOTOR_DRIVER_ARMED_DUTY_CYCLE
+        int "Motor duty cycle while armed"
+        default 100
+        help 
+            The duty cycle while armed, but at 0 thrust. From 0 - MAX_DUTY_CYCLE.
+
+    config MOTOR_DRIVER_MAX_DUTY_CYCLE 
+        int "Max duty cycle"
+        default 8192
+        help
+            Maximum Duty cycle. From 0 - 2^DUTY_CYCLE_RESOLUTION. Probably, 2^13=8192 is smart.
+
+    config MOTOR_DRIVER_PWM_FREQUENCY
+        int "Motor driver pwm frequency in hz"
+        default 4000
+        help 
+            Frequency of the PWM signal for the Motors. idk what the bounds are.
+endmenu
