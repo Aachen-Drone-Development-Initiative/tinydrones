@@ -51,7 +51,7 @@ void remote_comm_set_update_parameters_callback(remote_comm_update_parameters_ca
 
 // Helper function, inteded to be used in the 'update_parameters_callback'.
 // It is the callers responsibility that the types of the parameter and of 'value_out' match.
-bool remote_comm_expect_parameter(const EPacket_C2D_Parameters* epkt_params, const char* name, void* value_out);
+bool remote_comm_expect_parameter(const EPacket_C2D_Parameters* epkt_params, const char* name, uint8_t dtype, void* value_out)
 
 // Use this to initialize the header of your EPacket. See below for an example.
 EHeader remote_comm_create_packet_header(EPacket_Type type, size_t packet_size, EPacket_Flags flags);

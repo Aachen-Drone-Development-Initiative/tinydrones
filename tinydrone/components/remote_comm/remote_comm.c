@@ -846,13 +846,15 @@ static inline size_t get_dtype_size(uint8_t dtype)
     return 0;
 }
 
-bool remote_comm_expect_parameter(const EPacket_C2D_Parameters* epkt_params, const char* name, void* value_out)
+bool remote_comm_expect_parameter(const EPacket_C2D_Parameters* epkt_params, const char* name, uint8_t dtype, void* value_out)
 {
     const Payload_Named_Value* params = epkt_params->parameters;
     int16_t param_count = epkt_params->parameter_count;
     
     for (int i = 0; i < param_count; ++i) {
-        if (strncmp(params[i].name, name, NAMED_VALUE_NAME_LENGTH) == 0) {
+        if ((params[i].dtype == dtype) &&
+            (strncmp(params[i].name, name, NAMED_VALUE_NAME_LENGTH) == 0))
+        {
             memcpy(value_out, &params[i].data, get_dtype_size(params[i].dtype));
             return true;
         }
