@@ -132,6 +132,18 @@ typedef struct {
 // Info about the currently connected controller
 static Controller_Info s_controller = {0};
 
+typedef struct {
+    _Atomic float x;
+    _Atomic float y;
+    _Atomic float z;
+    _Atomic float pitch;
+    _Atomic float yaw;
+    _Atomic float roll;
+} External_Pose_Estimate;
+
+// Latest external pose estimate
+static External_Pose_Estimate s_external_pose_estimate = {0};
+
 // Contains incoming, to-be-sent, and to-be-resent packets.
 // We use a unified queue, so that the main task can simply work through everything linearly.
 // And stop/resume with minimal latency, because we don't have to poll multiple queues.
@@ -226,6 +238,28 @@ static void set_control_commands(Payload_Controll_Commands ctrl_cmds)
     atomic_store(&s_controller.roll,   ctrl_cmds.roll);
     atomic_store(&s_controller.thrust, ctrl_cmds.thrust);
     atomic_store(&s_controller.flags,  ctrl_cmds.flags);
+}
+
+static Payload_Pose_Estimate get_external_pose_estimate()
+{
+    return (Payload_Pose_Estimate) {
+        .x      = atomic_load(&s_external_pose_estimate.x),
+        .y      = atomic_load(&s_external_pose_estimate.y),
+        .z      = atomic_load(&s_external_pose_estimate.z),
+        .pitch  = atomic_load(&s_external_pose_estimate.pitch),
+        .yaw    = atomic_load(&s_external_pose_estimate.yaw),
+        .roll   = atomic_load(&s_external_pose_estimate.roll),
+    };
+}
+
+static void set_external_pose_estimate(Payload_Pose_Estimate pose)
+{
+    atomic_store(&s_external_pose_estimate.x,      pose.x);
+    atomic_store(&s_external_pose_estimate.y,      pose.y);
+    atomic_store(&s_external_pose_estimate.z,      pose.z);
+    atomic_store(&s_external_pose_estimate.pitch,  pose.pitch);
+    atomic_store(&s_external_pose_estimate.yaw,    pose.yaw);
+    atomic_store(&s_external_pose_estimate.roll,   pose.roll);
 }
 
 static void espnow_send_callback(const esp_now_send_info_t *tx_info, esp_now_send_status_t status)
@@ -564,6 +598,13 @@ static void handle_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_eve
         }
         
     } break;
+
+    case EPKT_C2D_POSE_ESTIMATE:
+    {
+        EPacket_C2D_Pose_Estimate* epkt_c2d_pose = (EPacket_C2D_Pose_Estimate*) epkt;
+        set_external_pose_estimate(epkt_c2d_pose->pose);
+        
+    } break;
         
     default:
         CONTR_LOG_DEBUG("Received ESP-Now Packet with unexpected type: '%d'", epkt->header.type);
@@ -762,6 +803,11 @@ bool remote_comm_online()
 void remote_comm_get_latest_controll_commands(Payload_Controll_Commands* out)
 {
     *out = get_control_commands();
+}
+
+void remote_comm_get_latest_external_pose_estimate(Payload_Pose_Estimate* out)
+{
+    *out = get_external_pose_estimate();
 }
 
 EHeader remote_comm_create_packet_header(EPacket_Type type, size_t packet_size, EPacket_Flags flags)

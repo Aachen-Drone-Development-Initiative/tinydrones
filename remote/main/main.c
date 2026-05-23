@@ -1199,6 +1199,30 @@ static void handle_incoming_serial_packet(const SPacket* spkt)
         
     } break;
 
+    case SPKT_M2C_DRONE_POSE_ESTIMATE:
+    {
+        SPacket_M2C_Drone_Pose_Estimate* spkt_m2c_drone_pose = (SPacket_M2C_Drone_Pose_Estimate*) spkt;
+
+        int drone_idx = get_drone_idx_from_drone_name(spkt_m2c_drone_pose->drone_name);
+        if (drone_idx < 0) {
+            break;
+        }
+
+        if (!s_drone_infos[drone_idx].connected) {
+            LOG_ERROR("Can't pose estimate to drone, because the drone is not connected.");
+            break;
+        }
+
+        size_t epkt_size = sizeof(EPacket_C2D_Pose_Estimate);
+        ESPNow_Send_Event* e_send_event = espnow_send_event_acquire_m2d(drone_idx, spkt, EPKT_C2D_POSE_ESTIMATE, epkt_size, 0);
+        if (e_send_event) {
+            EPacket_C2D_Pose_Estimate* epkt_c2d_pose = (EPacket_C2D_Pose_Estimate*) &e_send_event->epkt;
+            epkt_c2d_pose->pose = spkt_m2c_drone_pose->pose;
+            espnow_send_event_complete(e_send_event);
+        }
+        
+    } break;
+
     default:
         LOG_DEBUG("Received Serial Packet with unexpected or unknown type: '%u'", spkt->header.type);
         break;

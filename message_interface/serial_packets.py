@@ -15,6 +15,7 @@ SPKT_M2C_GET_DRONE_INFOS = 67
 SPKT_M2C_PING_DRONE = 68
 SPKT_M2C_RESTART_DRONE = 69
 SPKT_M2C_SET_DRONE_PARAMETERS = 70
+SPKT_M2C_DRONE_POSE_ESTIMATE = 71
 
 SPKT_C2M_SIMPLE_RESPONSE = 96
 SPKT_C2M_DRONE_INFOS = 97
@@ -116,8 +117,15 @@ def pack_m2c_ping_drone(drone_name: str) -> bytes:
 
 def pack_m2c_restart_drone(drone_name: str) -> bytes:
     payload_format = '<' + str(DRONE_NAME_LENGTH) + 's'
-    header = pack_header(SPKT_M2C_RESTART_DRONE, struct.calcsize(payload_format))
+    header = pack_header(SPKT_M2C_DRONE_POSE_ESTIMATE, struct.calcsize(payload_format))
     payload = struct.pack(payload_format, drone_name.encode('ascii'))
+    return header + payload
+
+
+def pack_m2c_pose_estimate(drone_name: str, x: float, y: float, z: float, pitch: float, yaw: float, roll: float, time_us: int) -> bytes:
+    payload_format = '<ffffffq' + str(DRONE_NAME_LENGTH) + 's'
+    header = pack_header(SPKT_M2C_DRONE_POSE_ESTIMATE, struct.calcsize(payload_format))
+    payload = struct.pack(payload_format, x, y, z, pitch, yaw, roll, time_us, drone_name.encode('ascii'))
     return header + payload
 
 

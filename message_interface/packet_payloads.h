@@ -40,5 +40,15 @@ typedef struct {
     uint64_t data;
 } PACKED Payload_Named_Value;
 
+typedef struct {
+    float x;
+    float y;
+    float z;
+    float pitch;
+    float yaw;
+    float roll;
+    int64_t time_us;
+} PACKED Payload_Pose_Estimate;
+
 
 #undef PACKED

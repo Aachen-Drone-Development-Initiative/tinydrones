@@ -27,6 +27,7 @@ enum {
     EPKT_C2D_PING = 36,               // Controller expects an ACK_RECEIVE from the drone
     EPKT_C2D_RESTART = 37,            // Controller asks Drone to restart
     EPKT_C2D_PARAMETERS = 38,
+    EPKT_C2D_POSE_ESTIMATE = 39,
 };
 typedef uint8_t EPacket_Type;
 
@@ -119,5 +120,9 @@ typedef struct {
 
 #define EPKT_MAX_PARAMETERS_PER_PACKET ((EPKT_MAX_SIZE - sizeof(EPacket_C2D_Parameters)) / sizeof(Payload_Named_Value))
 
+typedef struct {
+    EHeader header;             // type == EPKT_C2D_POSE_ESTIMATE
+    Payload_Pose_Estimate pose;
+} PACKED EPacket_C2D_Pose_Estimate;
 
 #undef PACKED

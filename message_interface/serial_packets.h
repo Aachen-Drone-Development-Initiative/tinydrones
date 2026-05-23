@@ -17,13 +17,11 @@ enum {
     SPKT_M2C_PING_DRONE = 68,             // Master requests a Ping-Pong response test for a specific Drone
     SPKT_M2C_RESTART_DRONE = 69,          // Master requests to restart a specific Drone
     SPKT_M2C_SET_DRONE_PARAMETERS = 70,
-    /* SPKT_M2C_DRONE_SETTINGS = 70,         // Master sends settings for a specific Drone to the Controller */
+    SPKT_M2C_DRONE_POSE_ESTIMATE = 71,
 
     SPKT_C2M_SIMPLE_RESPONSE = 96,    // Controller sends a success/fail response for a M2C packet like SPKT_M2C_CONNECT_TO_DRONE
     SPKT_C2M_DRONE_INFOS = 97,        // Controller sends the requested basic infos about available Drones to the Master
     SPKT_C2M_DRONE_LOG_VALUES = 98,
-    /* SPKT_C2M_DRONE_IMU_DATA = 98,     // Controller sends IMU data of a Drone to the Master */
-    /* SPKT_C2M_DRONE_TELEMETRY = 99,    // Controller sends telemetry data of a Drone to the Master */
     SPKT_C2M_MSG = 100,
 };
 typedef uint8_t SPacket_Type;
@@ -91,6 +89,12 @@ typedef struct {
     int16_t parameter_count;
     Payload_Named_Value parameters[0];
 } PACKED SPacket_M2C_Set_Drone_Parameters;
+
+typedef struct {
+    SHeader header;             // type == SPKT_M2C_DRONE_POSE_ESTIMATE
+    Payload_Pose_Estimate pose;
+    char drone_name[DRONE_NAME_LENGTH];
+} PACKED SPacket_M2C_Drone_Pose_Estimate;
 
 
 // C2M - Controller to Master Packets

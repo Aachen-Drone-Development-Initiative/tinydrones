@@ -43,6 +43,9 @@ bool remote_comm_online();
 // Get the most recent controll commands. Always works, even if controller is disconnected or offline.
 void remote_comm_get_latest_controll_commands(Payload_Controll_Commands* out);
 
+// Get the most recent external pose estimate. Always works, even if controller is disconnected or offline.
+void remote_comm_get_latest_external_pose_estimate(Payload_Pose_Estimate* out);
+
 typedef void (*remote_comm_update_parameters_callback_t)(const EPacket_C2D_Parameters* epkt_params);
 
 // Try to make the callback fast, because since its called from the main remote_comm task,
