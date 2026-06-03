@@ -58,25 +58,35 @@ void sensors_task(void *param) {
     // Perform action here.
     MPU6050_Data mpu_data = mpu6050_get_data(&mpu_handle);
 
+    //* Gravitation
     float accel_roll_deg = atan(mpu_data.acc_x / mpu_data.acc_z) * 180 / M_PI;
     float accel_pitch_deg = atan(-mpu_data.acc_y / mpu_data.acc_z) * 180 / M_PI;
+    //TODO: accel_yaw ?
     // ESP_LOGI(pcTaskGetName(NULL), "accel roll %f", accel_roll_deg);
     // ESP_LOGI(pcTaskGetName(NULL), "accel pitch %f", accel_pitch_deg);
-
-    float ratio = 0.99;
-    float gyro_pitch_deg =
-        pitch_deg - mpu_data.omega_x / FREQUENCY_IN_HZ * 180 / M_PI;
-    float gyro_roll_deg =
-        roll_deg - mpu_data.omega_y / FREQUENCY_IN_HZ * 180 / M_PI;
+    
+    //* OLD
+    // float ratio = 0.99;
+    // float gyro_pitch_deg =
+    //     pitch_deg - mpu_data.omega_x / FREQUENCY_IN_HZ * 180 / M_PI;
+    // float gyro_roll_deg =
+    //     roll_deg - mpu_data.omega_y / FREQUENCY_IN_HZ * 180 / M_PI;
 
     // ESP_LOGI(pcTaskGetName(NULL), "roll %f", gyro_roll_deg);
     // ESP_LOGI(pcTaskGetName(NULL), "pitch %f", gyro_pitch_deg);
 
-    pitch_deg = ratio * gyro_pitch_deg + (1 - ratio) * accel_pitch_deg;
-    roll_deg = ratio * gyro_roll_deg + (1 - ratio) * accel_roll_deg;
+    //* OLD
+    // pitch_deg = ratio * gyro_pitch_deg + (1 - ratio) * accel_pitch_deg;
+    // roll_deg = ratio * gyro_roll_deg + (1 - ratio) * accel_roll_deg;
 
     // ESP_LOGI(pcTaskGetName(NULL), "gyro roll %f", roll_deg);
     // ESP_LOGI(pcTaskGetName(NULL), "gyro pitch %f", pitch_deg);
+
+
+    // TODO: implement Madgwick Filter
+    // TODO: 1) parameter : accel_roll_deg, accel_pitch_deg, mpu_data.omega_x,  mpu_data.omega_y
+    // TODO: 2) output : roll_deg, pitch_deg passing ( yaw_deg ?) into attitude
+    //? ONLY 2-DIM ?
 
     attitude attitude = {roll_deg, pitch_deg};
     BaseType_t xReturn = xQueueOverwrite(current_attitude_queue, &attitude);
