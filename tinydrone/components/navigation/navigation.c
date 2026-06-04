@@ -3,6 +3,7 @@
 #include "esp_log.h"
 #include "freertos/idf_additions.h"
 #include "mpu6050.h"
+#include "fusion_math.h"
 
 #include "sys/time.h"
 #include <math.h>
