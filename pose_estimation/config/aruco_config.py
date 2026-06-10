@@ -1,19 +1,19 @@
 # Aruco Config
 import cv2 as cv
 import numpy as np
-import config.packages as pkg
+import pose_estimation.config.packages as pkg
 
 ARUCO_DIC = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_5X5_1000)
 
 MARKER_DIC = {
     "3":pkg.DroneMarkerConfig(
-        id=302,
-        drone_name="ESP1",
+        id=3,
+        drone_name="tiny1",
         size=50                   # [mm]
     ), 
     "301":pkg.DroneMarkerConfig(
         id=301,
-        drone_name="ESP2",
+        drone_name="tiny2",
         size=97                     # [mm]
     )
 }

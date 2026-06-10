@@ -23,6 +23,7 @@ class CameraPos():
             f"postition     : x: {self.position[0]:.2f} [mm] y: {self.position[1]:.2f} [mm] z: {self.position[2]:.2f} [mm] \n"
             f"rotation (deg): roll: {self.rotation_euler[0]:.2f} [°] pitch: {self.rotation_euler[1]:.2f} [°] yaw: {self.rotation_euler[2]:.2f}"
         )
+
 class MSGDroneMarker(ctypes.Structure):
     _pack_ = 1
     _fields_ = [("drone_name",ctypes.c_char),

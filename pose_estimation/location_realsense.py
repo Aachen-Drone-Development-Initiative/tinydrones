@@ -1,22 +1,23 @@
 import cv2 as cv
 import pyrealsense2 as rs
 import numpy as np
-import config.realsense_config as realsense
-import config.aruco_config as aruco_config
-import config.packages as pkg
+import pose_estimation.config.realsense_config as realsense
+import pose_estimation.config.aruco_config as aruco_config
+import pose_estimation.config.packages as pkg
 from scipy.spatial.transform import Rotation as Rot
-import logging, os, time
+import logging, os, time, tinyapi
+from message_interface.serial_packets import pack_m2c_pose_estimate
 
 logging.basicConfig(format='%(asctime)s [%(levelname)s] %(message)s',level=logging.INFO)
 
 class RealsenseLocator():
-    def __init__(self, serial_id:str=None, logger=None):
+    def __init__(self, serial_id:str=None, logger=None, serial_port:str=None):
         # RealSense-Pipeline starten
         if logger is None:
             self.logger = logging.getLogger()
         else:
             self.logger = logger
-
+        
         self.logger.info("Init Realsense Locator")
         self.marker_pos = {}
         self.fps = 0
@@ -29,6 +30,14 @@ class RealsenseLocator():
             self.init_realsense_camera(serial_id)
         else:
             self.logger.error("No Serial Number given")
+        
+        if serial_port is not None:
+            tinyapi.open_port(serial_port)
+            #TODO connect to listed drones
+            tinyapi.connect("tiny1")
+            self.logger.info(f"Connected to TinyAPI on port {serial_port}")
+        else:
+            self.logger.error("No Serial Port given")
 
     def init_aruco_detector(self):
         # Define Aruco detector 
@@ -238,6 +247,22 @@ class RealsenseLocator():
 
         print("############################################################################")
 
+    def send_drone_pose(self):
+        self.logger.debug("Send Drone Pose Estimate")
+        for marker in self.marker_pos_world:
+            msg = pack_m2c_pose_estimate(
+                drone_name=aruco_config.MARKER_DIC[self.marker_pos_world[marker].id].drone_name,
+                x=self.marker_pos_world[marker].position[0]/1000, # mm to m
+                y=self.marker_pos_world[marker].position[1]/1000, # mm to m
+                z=self.marker_pos_world[marker].position[2]/1000, # mm to m
+                roll=self.marker_pos_world[marker].rotation_euler[0],
+                pitch=self.marker_pos_world[marker].rotation_euler[1],
+                yaw=self.marker_pos_world[marker].rotation_euler[2],
+                time_us=int(time.perf_counter())
+            )
+            self.logger.debug(f"send_pose_estimate: {msg}")
+            tinyapi.write_packet(msg)
+
     def aruco_detection_mainloop(self):
         while True:
             cycle_start = time.perf_counter()
@@ -248,13 +273,17 @@ class RealsenseLocator():
                 self.transform_world_coordinate()
             
             self.print_information()
-            self.fps = 1/(time.perf_counter() - cycle_start)
 
+            self.send_drone_pose()
+            self.marker_pos_world = {}
+            
+            self.fps = 1/(time.perf_counter() - cycle_start)
+            
             cv.imshow("Aruco Detection", self.realsense_color_image)
             cv.waitKey(1)
             
 if __name__ == "__main__":
-    locate = RealsenseLocator(realsense.REALSENSE_ID)
+    locate = RealsenseLocator(realsense.REALSENSE_ID,serial_port="/dev/ttyACM0")
     try:
         locate.aruco_detection_mainloop()
     
