@@ -106,11 +106,18 @@ enum {
 };
 
 typedef struct {
-    SHeader header;             // type == SPKT_C2M_SIMPLE_RESPONSE
+    SHeader header;                 // type == SPKT_C2M_SIMPLE_RESPONSE
     uint8_t response;
     SPacket_ID request_pkt_id;      // id of the packet which this packet responds to
     SPacket_Type request_pkt_type;  // type of the packet which this packet responds to
 } PACKED SPacket_C2M_Simple_Response;
+
+/* typedef struct { */
+/*     SHeader header;                 // type == SPKT_C2M_SIMPLE_RESPONSE */
+/*     uint8_t response; */
+/*     uint64_t r2d2r_delay_us;        // remote to drone to remote delay in microseconds */
+/*     SPacket_ID request_pkt_id;      // id of the packet which this packet responds to */
+/* } PACKED SPacket_C2M_Ping_Drone_Response; */
 
 typedef struct {
     SHeader header;             // type == SPKT_C2M_DRONE_INFOS

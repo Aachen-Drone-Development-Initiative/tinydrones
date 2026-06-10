@@ -92,6 +92,8 @@ typedef struct {
     SPacket_ID origin_serial_packet_id;
     SPacket_Type origin_serial_packet_type;
     esp_timer_handle_t pkt_resend_timer;
+    int64_t time_at_queue_entry_us;
+    int64_t time_at_send_us;
     EPacket epkt;
 } ESPNow_Send_Event;
 
@@ -411,8 +413,9 @@ static ESPNow_Send_Event* espnow_send_event_acquire_m2d(int dest_drone_idx, cons
     return e_send_event;
 }
 
-static void espnow_send_event_complete(const ESPNow_Send_Event* e_send_event)
+static void espnow_send_event_complete(ESPNow_Send_Event* e_send_event)
 {
+    e_send_event->time_at_queue_entry_us = esp_timer_get_time();
     UBaseType_t ret = xRingbufferSendComplete(s_event_ringbuf, (void*) e_send_event);
     if (ret != pdTRUE) {
         LOG_ERROR("espnow_send_event_complete: Completing send event in ringbuffer failed.");
@@ -547,6 +550,14 @@ static void handle_espnow_packet_acknowledge(ESPNow_Send_Event* e_send_event)
 
     case EPKT_C2D_PING: {
         response_to_master = RESPONSE_SUCCESS;
+        // NOTE (yuzeni): This is a hack to return the delay info to the unser, the 'non-hacky' way to do this would be to implement a new packet for returning the ping_answer + ping_delay
+        if (e_send_event->send_simple_response_to_master) {
+            int64_t time_us = esp_timer_get_time();
+            float ping_delay_total_ms = (float) (time_us - e_send_event->time_at_queue_entry_us) / 1000.0f;
+            float ping_delay_without_queue_time_ms = (float) (time_us - e_send_event->time_at_send_us) / 1000.0f;
+            LOG_ERROR("ping delay in ms: %f", ping_delay_total_ms);
+            LOG_ERROR("ping delay without queue in ms: %f", ping_delay_without_queue_time_ms);
+        }
     } break;
 
     case EPKT_C2D_PARAMETERS: {
@@ -1266,6 +1277,7 @@ static void send_espnow_packet(ESPNow_Send_Event* e_send_event)
 {
     EPacket* epkt = &e_send_event->epkt;
 
+    e_send_event->time_at_send_us = esp_timer_get_time();
     espnow_send_bytes(e_send_event->mac_addr, (uint8_t*) epkt, espnow_packet_size(epkt->header));
 
     if (epkt->header.flags & EPKT_FLAG_REQUIRE_ACK)

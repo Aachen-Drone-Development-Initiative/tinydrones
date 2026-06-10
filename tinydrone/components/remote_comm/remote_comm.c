@@ -54,7 +54,7 @@ const int espnow_wait_for_ack_resend_timeouts_ms[] = {20, 40, 80, 160, 320};
 // Also send the error message to the controller
 #define CONTR_LOG_ERROR(format, ...)                                    \
     do {                                                                \
-        remote_comm_printf("ERROR (TINYDRONE): " format "\n", ##__VA_ARGS__); \
+        remote_comm_printf("ERROR: " format "\n", ##__VA_ARGS__); \
         ESP_LOGE(REMOTE_COMM_TAG, format, ##__VA_ARGS__);                      \
     } while (0);
 
@@ -71,7 +71,7 @@ const int espnow_wait_for_ack_resend_timeouts_ms[] = {20, 40, 80, 160, 320};
 // Also send the debug message to the controller
 #define CONTR_LOG_DEBUG(format, ...)                                    \
     do {                                                                \
-        remote_comm_printf("DEBUG (TINYDRONE): " format "\n", ##__VA_ARGS__); \
+        remote_comm_printf("DEBUG: " format "\n", ##__VA_ARGS__); \
         ESP_LOGI(REMOTE_COMM_TAG, format, ##__VA_ARGS__);                      \
     } while (0);
 
@@ -98,6 +98,7 @@ typedef struct {
     Event_Type event_type;
     uint8_t mac_addr[ESP_NOW_ETH_ALEN];
     EPacket epkt;
+    int64_t time_at_receive_us;
 } ESPNow_Receive_Event;
 
 typedef struct {
@@ -302,6 +303,7 @@ static void espnow_receive_callback(const esp_now_recv_info_t *recv_info, const 
     }
 
     e_recv_event->event_type = ESPNOW_RECEIVE_EVENT;
+    e_recv_event->time_at_receive_us = esp_timer_get_time();
     memcpy(e_recv_event->mac_addr, recv_info->src_addr, ESP_NOW_ETH_ALEN);
     memcpy(&e_recv_event->epkt, data, length);
 
@@ -497,7 +499,7 @@ static void handle_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_eve
         }
         return;
     }
-    
+
     // If the sender is not our controller, then they either want to connect. Or its a mistake and we should ignore the packet.
     if (epkt->header.type == EPKT_C2D_CONNECT)
     {
@@ -585,7 +587,13 @@ static void handle_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_eve
 
     } break;
 
-    case EPKT_C2D_PING: break; // Do nothing except sending an ack
+    case EPKT_C2D_PING:
+    {
+        /* int64_t time_us = esp_timer_get_time(); */
+        /* float ping_recv_to_process_delay_ms = (float) (time_us - e_recv_event->time_at_receive_us) / 1000.0f; */
+        /* CONTR_LOG_ERROR("ping receive to process delay in ms: %f", ping_recv_to_process_delay_ms); */
+        
+    } break;
 
     case EPKT_C2D_RESTART: {
         esp_restart();
@@ -769,6 +777,7 @@ void remote_comm_init(const Remote_Comm_Config* config)
     
     TaskHandle_t task_handle = NULL; // We don't keep the task handle, because we don't need it.
     xTaskCreate(remote_comm_task, "remote_comm_task", config->task_stack_size, NULL, config->task_priority, &task_handle);
+    /* xTaskCreatePinnedToCore(remote_comm_task, "remote_comm_task", config->task_stack_size, NULL, config->task_priority, &task_handle, 1); */
     assert(task_handle);
 }
 
