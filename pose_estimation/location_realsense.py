@@ -12,7 +12,7 @@ logging.basicConfig(format='%(asctime)s [%(levelname)s] %(message)s',level=loggi
 
 class RealsenseLocator():
     def __init__(self, serial_id:str=None, logger=None, serial_port:str=None):
-        # RealSense-Pipeline starten
+        """Initialize Realsense Locator, Aruco Detector and TinyAPI Connection"""
         if logger is None:
             self.logger = logging.getLogger()
         else:
@@ -33,21 +33,22 @@ class RealsenseLocator():
         
         if serial_port is not None:
             tinyapi.open_port(serial_port)
-            #TODO connect to listed drones
-            tinyapi.connect("tiny1")
             self.logger.info(f"Connected to TinyAPI on port {serial_port}")
+            for marker_id in aruco_config.DRONE_DIC:
+                tinyapi.connect(aruco_config.DRONE_DIC[marker_id].drone_name)
+                self.logger.info(f"Connected to {aruco_config.DRONE_DIC[marker_id].drone_name}") 
         else:
             self.logger.error("No Serial Port given")
 
     def init_aruco_detector(self):
-        # Define Aruco detector 
+        """Define Aruco Detector and Parameters"""
         self.logger.info("Init Aruco Detector")
         self.aruco_parameters = cv.aruco.DetectorParameters()
         self.aruco_detector = cv.aruco.ArucoDetector(aruco_config.ARUCO_DIC,self.aruco_parameters)
 
     def init_realsense_camera(self, serial_id:str):
-        # Init Realsense camera
-        self.logger.info("init Realsense Pipeline")
+        """Setup Realsense Camera and start Pipeline"""
+        self.logger.info("Init Realsense Pipeline")
         self.pipeline = rs.pipeline()
         config = rs.config()
         try:
@@ -56,7 +57,7 @@ class RealsenseLocator():
             self.logger.error(f"No camera with Serial ID: {serial_id} is available")
             return
 
-        config.enable_stream(rs.stream.depth,realsense.PIPELINE_WIDTH,realsense.PIPELINE_HEIGHT, rs.format.z16, realsense.PIPELINE_FPS)
+        #config.enable_stream(rs.stream.depth,realsense.PIPELINE_WIDTH,realsense.PIPELINE_HEIGHT, rs.format.z16, realsense.PIPELINE_FPS)
         config.enable_stream(rs.stream.color, realsense.PIPELINE_WIDTH, realsense.PIPELINE_HEIGHT , rs.format.bgr8, realsense.PIPELINE_FPS)
         try:
             self.cfg = self.pipeline.start(config)
@@ -79,7 +80,7 @@ class RealsenseLocator():
         self.logger.info(f"Realsense Camera {serial_id} inizilized and pipline started")
     
     def get_realsense_image(self):
-        # Get realsense Images
+        """Get Realsense Image from Pipeline"""
         self.logger.debug("Realsense Camera image recieved")
         frames = self.pipeline.wait_for_frames()
         realsense_color_frame = frames.get_color_frame()
@@ -89,9 +90,9 @@ class RealsenseLocator():
         #self.realsense_depth_image = np.asanyarray(realsense_depth_frame.get_data())
 
     def get_marker_position(self):
+        """Detect and calculate the position of the Aruco Marker in Camera Coordinates"""
         self.logger.debug("Calculate Marker Position")
         corners, ids, _ = self.aruco_detector.detectMarkers(self.realsense_color_image)
-        
         # Draw Aruco marker
         cv.aruco.drawDetectedMarkers(self.realsense_color_image, corners, ids)
         if ids is not None:
@@ -126,7 +127,7 @@ class RealsenseLocator():
                 self.marker_pos[str(id_marker)] = pkg.DroneMarkerState(id=id_marker,tvec=tvec,rvec=rvec)
     
     def get_camera_pos_slam(self):
-        # Calculate Camera Pos
+        """Calculate Camera Position via SLAM Markers"""
         self.logger.debug("Calculate Camera Pos via SLAM")
         corners, ids, _ = self.aruco_detector.detectMarkers(self.realsense_color_image)
         image_points_all = []
@@ -194,7 +195,7 @@ class RealsenseLocator():
                 self.logger.error("Image Points and Object points are not the same")
         
     def transform_world_coordinate(self):
-        # Transform Marker coordinates into World Cordinates
+        """Transform Marker coordinates into World Coordinates"""
         # --- World -> Camera aus SLAM ---
         R_wc, _ = cv.Rodrigues(self.camera_pos.rvec)
         t_wc = self.camera_pos.tvec.reshape(3,1)
@@ -235,7 +236,7 @@ class RealsenseLocator():
         self.logger.debug("Marker World Position updated")
 
     def print_information(self):
-        # Print information of marker
+        """Print Information of Marker"""
         os.system("clear")
         print("############################################################################")
         print(f"FPS: {float(self.fps):.2f}")
@@ -248,27 +249,30 @@ class RealsenseLocator():
         print("############################################################################")
 
     def send_drone_pose(self):
+        """Send Drone Pose Estimate to TinyAPI"""
         self.logger.debug("Send Drone Pose Estimate")
         for marker in self.marker_pos_world:
             msg = pack_m2c_pose_estimate(
-                drone_name=aruco_config.MARKER_DIC[self.marker_pos_world[marker].id].drone_name,
+                drone_name=aruco_config.DRONE_DIC[self.marker_pos_world[marker].id].drone_name,
                 x=self.marker_pos_world[marker].position[0]/1000, # mm to m
                 y=self.marker_pos_world[marker].position[1]/1000, # mm to m
                 z=self.marker_pos_world[marker].position[2]/1000, # mm to m
-                roll=self.marker_pos_world[marker].rotation_euler[0],
-                pitch=self.marker_pos_world[marker].rotation_euler[1],
-                yaw=self.marker_pos_world[marker].rotation_euler[2],
+                roll=np.deg2rad(self.marker_pos_world[marker].rotation_euler[0]),
+                pitch=np.deg2rad(self.marker_pos_world[marker].rotation_euler[1]),
+                yaw=np.deg2rad(self.marker_pos_world[marker].rotation_euler[2]),
                 time_us=int(time.perf_counter())
             )
-            self.logger.debug(f"send_pose_estimate: {msg}")
+            self.logger.debug(f"Send Pose Estimation: {msg}")
             tinyapi.write_packet(msg)
 
     def aruco_detection_mainloop(self):
+        """Mainloop for Aruco Detection and Pose Estimation"""
         while True:
             cycle_start = time.perf_counter()
             self.get_realsense_image()
             self.get_marker_position()
             slam_succ = self.get_camera_pos_slam()
+
             if slam_succ == True:
                 self.transform_world_coordinate()
             
