@@ -6,7 +6,7 @@ all_packets = [] # A list of all the packets received so far
 
 
 def open_port(portname):
-    """opens a port as serialport, a controller should be connected to it"""
+    """opens a port as serialport, a remote/dongle should be connected to it"""
     global serialport
     if serialport != None:
         serialport.close()
@@ -173,7 +173,7 @@ def arm(drone_name: str):
 
 
 def disarm(drone_name: str):
-    """Send a zeroed out controll-commands packet to the drone (ie. do freeze)"""
+    """Send a zeroed out controll-commands packet to the drone"""
     write_packet(pack_m2c_control_commands(drone_name,
                                            pitch=0, yaw=0, roll=0, thrust=0,
                                            flags=0))
