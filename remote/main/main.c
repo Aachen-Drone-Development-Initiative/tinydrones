@@ -6,6 +6,8 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/ringbuf.h"
+#include "freertos/task.h"
+#include "soc/soc_caps.h"
 #include "nvs_flash.h"
 #include "esp_netif.h"
 #include "esp_now.h"
@@ -14,16 +16,28 @@
 #include "esp_wifi.h"
 #include "esp_mac.h"
 
-#include "driver/usb_serial_jtag.h"
-#include "driver/usb_serial_jtag_select.h"
+#if SOC_USB_SERIAL_JTAG_SUPPORTED
+#    include "driver/usb_serial_jtag.h"
+#    include "driver/usb_serial_jtag_select.h"
+#else
+#    include "driver/uart.h"
+#    include "driver/gpio.h"
+#endif
 
 // Static array sizes
 #define MAX_DRONES 128
 
 // Buffer sizes
-#define EVENT_RINGBUF_SIZE              (1024 * 20)
-#define USB_SERIAL_JTAG_IN_BUFFER_SIZE  (1024 * 10)
-#define USB_SERIAL_JTAG_OUT_BUFFER_SIZE (1024 * 10)
+#define EVENT_RINGBUF_SIZE         (1024 * 20)
+#define SERIAL_IN_BUFFER_SIZE      (1024 * 10)
+#define SERIAL_OUT_BUFFER_SIZE     (1024 * 10)
+#if !SOC_USB_SERIAL_JTAG_SUPPORTED
+#    define UART_SERIAL_NUM            UART_NUM_0
+#    define UART_SERIAL_TXD            UART_PIN_NO_CHANGE//GPIO_NUM_1
+#    define UART_SERIAL_RXD            UART_PIN_NO_CHANGE//GPIO_NUM_3
+#    define UART_SERIAL_RX_TASK_STACK  4096
+#    define UART_SERIAL_RX_TASK_PRIO   10
+#endif
 
 // Packet acknowledging
 #define MAX_ESPNOW_PACKETS_WAITING_FOR_ACK 10
@@ -36,10 +50,10 @@ static const int s_espnow_wait_for_ack_resend_timeouts_ms[] = {20, 40, 80, 160, 
 #define EVENT_RINGBUF_ACQUIRE_TICKS_TO_WAIT_FOR_OTHER_TASK portMAX_DELAY
 #define EVENT_RINGBUF_RECEIVE_TICKS_TO_WAIT                portMAX_DELAY
 
-// USB Serial waits
-#define USB_SERIAL_WRITE_MAX_TICKS_TO_WAIT     pdMS_TO_TICKS(10)
-#define USB_SERIAL_WRITE_LOG_MAX_TICKS_TO_WAIT pdMS_TO_TICKS(0)
-#define USB_SERIAL_READ_MAX_TICKS_TO_WAIT      0
+// Serial waits
+#define SERIAL_WRITE_MAX_TICKS_TO_WAIT     pdMS_TO_TICKS(10)
+#define SERIAL_WRITE_LOG_MAX_TICKS_TO_WAIT pdMS_TO_TICKS(0)
+#define SERIAL_READ_MAX_TICKS_TO_WAIT      0
 
 // ESP-Now settings
 #define ESPNOW_WIFI_MODE WIFI_MODE_AP
@@ -52,6 +66,7 @@ static const int s_espnow_wait_for_ack_resend_timeouts_ms[] = {20, 40, 80, 160, 
 static void serial_send_msg_to_master(const char* format, ...);
 
 #define LOG_ERROR(format, ...) serial_send_msg_to_master("ERROR (REMOTE): " format "\n", ##__VA_ARGS__)
+#define LOG_INFO(format, ...)  serial_send_msg_to_master("INFO (REMOTE): " format "\n", ##__VA_ARGS__)
 
 #define ENABLE_DEBUG_LOGS 1
 
@@ -140,9 +155,14 @@ static int64_t s_time_of_last_espnow_err_out_of_memory_us = 0;
 
 static void espnow_send_callback(const esp_now_send_info_t *tx_info, esp_now_send_status_t status);
 static void espnow_receive_callback(const esp_now_recv_info_t *recv_info, const uint8_t *data, int length);
+#if SOC_USB_SERIAL_JTAG_SUPPORTED
 static void usb_serial_jtag_select_notif_callback(usj_select_notif_t usb_serial_jtag_select_notif, BaseType_t *task_woken);
+#else
+static void uart_serial_rx_task(void* arg);
+#endif
 static void queue_ping_connected_drones_event_callback(void* arg);
 static void queue_espnow_resend_unacknowledged_event_callback(void* arg);
+static int serial_write_bytes(const void* src, size_t size, TickType_t ticks_to_wait);
 
 static size_t espnow_packet_size(EHeader e_header) { return sizeof(EHeader) + e_header.payload_size; }
 static size_t serial_packet_size(SHeader s_header) { return sizeof(SHeader) + s_header.payload_size; }
@@ -214,19 +234,53 @@ static SHeader serial_header_create(SPacket_Type type, size_t packet_size)
     };
 }
 
-static void usb_serial_jtag_init()
+static void serial_init()
 {
+#if SOC_USB_SERIAL_JTAG_SUPPORTED
     usb_serial_jtag_driver_config_t usb_serial_jtag_config = {
-        .rx_buffer_size = USB_SERIAL_JTAG_IN_BUFFER_SIZE,
-        .tx_buffer_size = USB_SERIAL_JTAG_OUT_BUFFER_SIZE,
+        .rx_buffer_size = SERIAL_IN_BUFFER_SIZE,
+        .tx_buffer_size = SERIAL_OUT_BUFFER_SIZE,
     };
 
-    if (usb_serial_jtag_driver_install(&usb_serial_jtag_config) != ESP_OK) {
-        printf("ERROR: init_usb_serial_jtag: usb_serial_jtag_driver_install failed, halting...");
-        abort();
-    }
+    ASSERT(usb_serial_jtag_driver_install(&usb_serial_jtag_config) == ESP_OK);
+#else
+    uart_config_t uart_config = {
+        .baud_rate = SERIAL_BAUD_RATE,
+        .data_bits = UART_DATA_8_BITS,
+        .parity    = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
 
+    ASSERT(uart_driver_install(UART_SERIAL_NUM, SERIAL_IN_BUFFER_SIZE, SERIAL_OUT_BUFFER_SIZE, 0, NULL, 0) == ESP_OK);
+    ASSERT(uart_param_config(UART_SERIAL_NUM, &uart_config) == ESP_OK);
+    ASSERT(uart_set_pin(UART_SERIAL_NUM, UART_SERIAL_TXD, UART_SERIAL_RXD, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) == ESP_OK);
+#endif
+}
+
+static void serial_start_receive()
+{
+#if SOC_USB_SERIAL_JTAG_SUPPORTED
     usb_serial_jtag_set_select_notif_callback(usb_serial_jtag_select_notif_callback);
+#else
+    ASSERT(xTaskCreate(uart_serial_rx_task,
+                       "uart_serial_rx",
+                       UART_SERIAL_RX_TASK_STACK,
+                       NULL,
+                       UART_SERIAL_RX_TASK_PRIO,
+                       NULL) == pdPASS);
+#endif
+}
+
+static int serial_write_bytes(const void* src, size_t size, TickType_t ticks_to_wait)
+{
+#if SOC_USB_SERIAL_JTAG_SUPPORTED
+    return usb_serial_jtag_write_bytes(src, size, ticks_to_wait);
+#else
+    (void) ticks_to_wait;
+    return uart_write_bytes(UART_SERIAL_NUM, src, size);
+#endif
 }
 
 static void nvs_init()
@@ -273,13 +327,14 @@ static void espnow_init()
 
 static void remote_init()
 {
-    usb_serial_jtag_init();
+    serial_init();
     nvs_init();
     wifi_init(false);
     espnow_init();
 
     s_event_ringbuf = xRingbufferCreate(EVENT_RINGBUF_SIZE, RINGBUF_TYPE_NOSPLIT);
     ASSERT(s_event_ringbuf);
+    serial_start_receive();
 
     const esp_timer_create_args_t periodic_ping_timer_args = {
         .callback = queue_ping_connected_drones_event_callback,
@@ -492,7 +547,7 @@ static void serial_send_msg_to_master(const char* format, ...)
     size_t packet_size = sizeof(SPacket_C2M_Msg) + log_msg_size;
     spkt_log->header = serial_header_create(SPKT_C2M_MSG, packet_size);
 
-    usb_serial_jtag_write_bytes(spkt_log, packet_size, USB_SERIAL_WRITE_LOG_MAX_TICKS_TO_WAIT);
+    serial_write_bytes(spkt_log, packet_size, SERIAL_WRITE_LOG_MAX_TICKS_TO_WAIT);
 }
 
 static void queue_c2m_simple_response_for_send(SPacket_ID request_pkt_id, SPacket_Type request_pkt_type, uint8_t response)
@@ -555,8 +610,8 @@ static void handle_espnow_packet_acknowledge(ESPNow_Send_Event* e_send_event)
             int64_t time_us = esp_timer_get_time();
             float ping_delay_total_ms = (float) (time_us - e_send_event->time_at_queue_entry_us) / 1000.0f;
             float ping_delay_without_queue_time_ms = (float) (time_us - e_send_event->time_at_send_us) / 1000.0f;
-            LOG_ERROR("ping delay in ms: %f", ping_delay_total_ms);
-            LOG_ERROR("ping delay without queue in ms: %f", ping_delay_without_queue_time_ms);
+            LOG_INFO("ping delay in ms: %f", ping_delay_total_ms);
+            LOG_INFO("ping delay without queue in ms: %f", ping_delay_without_queue_time_ms);
         }
     } break;
 
@@ -821,6 +876,7 @@ static void serial_rx_consume_bytes(const uint8_t* bytes, size_t bytes_len)
     }
 }
 
+#if SOC_USB_SERIAL_JTAG_SUPPORTED
 static void usb_serial_jtag_select_notif_callback(usj_select_notif_t usb_serial_jtag_select_notif, BaseType_t *task_woken)
 {
     (void) task_woken;
@@ -842,7 +898,7 @@ static void usb_serial_jtag_select_notif_callback(usj_select_notif_t usb_serial_
             bytes_to_read = sizeof(tmp_buf);
         }
 
-        int bytes_read = usb_serial_jtag_read_bytes(tmp_buf, bytes_to_read, USB_SERIAL_READ_MAX_TICKS_TO_WAIT);
+        int bytes_read = usb_serial_jtag_read_bytes(tmp_buf, bytes_to_read, SERIAL_READ_MAX_TICKS_TO_WAIT);
         if (bytes_read <= 0) {
             break;
         }
@@ -850,6 +906,44 @@ static void usb_serial_jtag_select_notif_callback(usj_select_notif_t usb_serial_
         serial_rx_consume_bytes(tmp_buf, (size_t) bytes_read);
     }
 }
+#else
+static void uart_serial_rx_task(void* arg)
+{
+    (void) arg;
+
+    uint8_t tmp_buf[256];
+
+    while (1) {
+        // Blocks until at least one byte arrives, then reads all of them.
+        int bytes_read = uart_read_bytes(UART_SERIAL_NUM, tmp_buf, 1, portMAX_DELAY);
+        if (bytes_read <= 0) {
+            continue;
+        }
+
+        serial_rx_consume_bytes(tmp_buf, (size_t) bytes_read);
+
+        while (1) {
+            size_t bytes_available = 0;
+            ASSERT(uart_get_buffered_data_len(UART_SERIAL_NUM, &bytes_available) == ESP_OK);
+            if (bytes_available == 0) {
+                break;
+            }
+
+            size_t bytes_to_read = bytes_available;
+            if (bytes_to_read > sizeof(tmp_buf)) {
+                bytes_to_read = sizeof(tmp_buf);
+            }
+
+            bytes_read = uart_read_bytes(UART_SERIAL_NUM, tmp_buf, bytes_to_read, SERIAL_READ_MAX_TICKS_TO_WAIT);
+            if (bytes_read <= 0) {
+                break;
+            }
+
+            serial_rx_consume_bytes(tmp_buf, (size_t) bytes_read);
+        }
+    }
+}
+#endif
 
 static void handle_incoming_espnow_packet(const ESPNow_Receive_Event* e_recv_event)
 {
@@ -1327,7 +1421,7 @@ static void send_serial_packet(const Serial_Send_Event* s_send_event)
     const SPacket* spkt = &s_send_event->spkt;
     size_t spkt_size = serial_packet_size(spkt->header);
 
-    int bytes_written = usb_serial_jtag_write_bytes(spkt, spkt_size, USB_SERIAL_WRITE_MAX_TICKS_TO_WAIT);
+    int bytes_written = serial_write_bytes(spkt, spkt_size, SERIAL_WRITE_MAX_TICKS_TO_WAIT);
     if (bytes_written != (int) spkt_size) {
         LOG_ERROR("send_serial_packet: Failed to write packet to the serialport");
     }

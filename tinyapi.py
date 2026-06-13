@@ -10,7 +10,7 @@ def open_port(portname):
     global serialport
     if serialport != None:
         serialport.close()
-    serialport = serial.Serial(port=portname, timeout=2) # 2 Second timeout seems reasonable
+    serialport = serial.Serial(port=portname, timeout=2, baudrate=SERIAL_BAUD_RATE) # 2 Second timeout seems reasonable
 
 
 def close_port():

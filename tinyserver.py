@@ -88,6 +88,8 @@ def main():
         print("No serialport specified, use --port/-p <portname>")
         exit(1)
     baudrate = args.baudrate
+    if baudrate == None:
+        baudrate = SERIAL_BAUD_RATE
 
     global serialport, serialport_write_lock, clients_lock
     serialport = serial.Serial(port=portname, baudrate=baudrate)
