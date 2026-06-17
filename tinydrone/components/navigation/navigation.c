@@ -1,4 +1,4 @@
-#include "include/navigation.h"
+#include "navigation.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "freertos/idf_additions.h"
@@ -9,6 +9,7 @@
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
+
 
 esp_err_t init_sensors(int i2c_sda, int i2c_scl, MPU6050_Handle* mpu_handle_pointer) {
     ESP_LOGI("init_sensors", "Initializing sensors");
@@ -40,6 +41,13 @@ esp_err_t init_sensors(int i2c_sda, int i2c_scl, MPU6050_Handle* mpu_handle_poin
     return ESP_OK;
 }
 
+
+void get_euler_from_q(attitude *attitude, float q0, float q1, float q2, float q3) const {
+    attitude->roll = asinf(-2.0f * (q1 * q3 - q0 * q2)) * 180.0f / (float)M_PI;
+    attitude->pitch = atan2f(2.0f * (q0 * q1 + q2 * q3), q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3) * 180.0f / (float)M_PI;
+}
+
+
 void sensors_task(void *param) {
   QueueHandle_t current_attitude_queue = *(QueueHandle_t*)param;
   static MPU6050_Handle mpu_handle = {0};
@@ -54,35 +62,104 @@ void sensors_task(void *param) {
   static float pitch_deg = 0;
   static float roll_deg = 0;
 
+  float beta = 0.1f;
+
+  float q0 = 1.0f; // w
+  float q1 = 0.0f; // x
+  float q2 = 0.0f; // y
+  float q3 = 0.0f; // z
+
+
   while (1) {
     // Wait for the next cycle.
     // Perform action here.
     MPU6050_Data mpu_data = mpu6050_get_data(&mpu_handle);
 
-    //* Gravitation
-    float accel_roll_deg = atan(mpu_data.acc_x / mpu_data.acc_z) * 180 / M_PI;
-    float accel_pitch_deg = atan(-mpu_data.acc_y / mpu_data.acc_z) * 180 / M_PI;
-    //TODO: accel_yaw ?
-    // ESP_LOGI(pcTaskGetName(NULL), "accel roll %f", accel_roll_deg);
-    // ESP_LOGI(pcTaskGetName(NULL), "accel pitch %f", accel_pitch_deg);
+    float ax = mpu_data.acc_x;
+    float ay = mpu_data.acc_y;
+    float az = mpu_data.acc_z;
+    float gx = mpu_data.gyr_x;
+    float gy = mpu_data.gyr_y;
+    float gz = mpu_data.gyr_z;
+
+
+
+    float recipNorm;
     
-    //* OLD
-    // float ratio = 0.99;
-    // float gyro_pitch_deg =
-    //     pitch_deg - mpu_data.omega_x / FREQUENCY_IN_HZ * 180 / M_PI;
-    // float gyro_roll_deg =
-    //     roll_deg - mpu_data.omega_y / FREQUENCY_IN_HZ * 180 / M_PI;
+    float qDot1, qDot2, qDot3, qDot4;
 
-    // ESP_LOGI(pcTaskGetName(NULL), "roll %f", gyro_roll_deg);
-    // ESP_LOGI(pcTaskGetName(NULL), "pitch %f", gyro_pitch_deg);
+    // Rate of change of quaternion from gyroscope
+    qDot1 = 0.5f * (-q1 * gx - q2 * gy - q3 * gz);
+    qDot2 = 0.5f * (q0 * gx + q2 * gz - q3 * gy);
+    qDot3 = 0.5f * (q0 * gy - q1 * gz + q3 * gx);
+    qDot4 = 0.5f * (q0 * gz + q1 * gy - q2 * gx);
 
-    //* OLD
-    // pitch_deg = ratio * gyro_pitch_deg + (1 - ratio) * accel_pitch_deg;
-    // roll_deg = ratio * gyro_roll_deg + (1 - ratio) * accel_roll_deg;
+    // Compute feedback only if accelerometer measurement valid (avoids NaN in accelerometer
+    // normalisation)
+    if (!((ax == 0.0f) && (ay == 0.0f) && (az == 0.0f))) {
+      float s0, s1, s2, s3;
+      float _2q0, _2q1, _2q2, _2q3, _4q0, _4q1, _4q2, _8q1, _8q2, q0q0, q1q1, q2q2, q3q3;
 
-    // ESP_LOGI(pcTaskGetName(NULL), "gyro roll %f", roll_deg);
-    // ESP_LOGI(pcTaskGetName(NULL), "gyro pitch %f", pitch_deg);
+      // Normalise accelerometer measurement
+      recipNorm = fast_inv_sqrt(ax * ax + ay * ay + az * az);
+      ax *= recipNorm;
+      ay *= recipNorm;
+      az *= recipNorm;
 
+      // Auxiliary variables to avoid repeated arithmetic
+      _2q0 = 2.0f * q0;
+      _2q1 = 2.0f * q1;
+      _2q2 = 2.0f * q2;
+      _2q3 = 2.0f * q3;
+      _4q0 = 4.0f * q0;
+      _4q1 = 4.0f * q1;
+      _4q2 = 4.0f * q2;
+      _8q1 = 8.0f * q1;
+      _8q2 = 8.0f * q2;
+      q0q0 = q0 * q0;
+      q1q1 = q1 * q1;
+      q2q2 = q2 * q2;
+      q3q3 = q3 * q3;
+
+      // Gradient decent algorithm corrective step
+      s0 = _4q0 * q2q2 + _2q2 * ax + _4q0 * q1q1 - _2q1 * ay;
+      s1 = _4q1 * q3q3 - _2q3 * ax + 4.0f * q0q0 * q1 - _2q0 * ay - _4q1 + _8q1 * q1q1 +
+           _8q1 * q2q2 + _4q1 * az;
+      s2 = 4.0f * q0q0 * q2 + _2q0 * ax + _4q2 * q3q3 - _2q3 * ay - _4q2 + _8q2 * q1q1 +
+           _8q2 * q2q2 + _4q2 * az;
+      s3 = 4.0f * q1q1 * q3 - _2q1 * ax + 4.0f * q2q2 * q3 - _2q2 * ay;
+      recipNorm = fast_inv_sqrt(s0 * s0 + s1 * s1 + s2 * s2 + s3 * s3); // normalise step magnitude
+      s0 *= recipNorm;
+      s1 *= recipNorm;
+      s2 *= recipNorm;
+      s3 *= recipNorm;
+
+      // Apply feedback step
+      qDot1 -= beta * s0;
+      qDot2 -= beta * s1;
+      qDot3 -= beta * s2;
+      qDot4 -= beta * s3;
+    }
+
+    // Integrate rate of change of quaternion to yield quaternion
+    q0 += qDot1 * dt;
+    q1 += qDot2 * dt;
+    q2 += qDot3 * dt;
+    q3 += qDot4 * dt;
+
+    // Normalise quaternion
+    recipNorm = fast_inv_sqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
+    q0 *= recipNorm;
+    q1 *= recipNorm;
+    q2 *= recipNorm;
+    q3 *= recipNorm;
+  
+
+
+
+    //* Gravitation
+   // float accel_roll_deg = atan(mpu_data.acc_x / mpu_data.acc_z) * 180 / M_PI;
+    //float accel_pitch_deg = atan(-mpu_data.acc_y / mpu_data.acc_z) * 180 / M_PI;
 
     // TODO: implement Madgwick Filter
     // TODO: 1) parameter : accel_roll_deg, accel_pitch_deg, mpu_data.omega_x,  mpu_data.omega_y
@@ -90,6 +167,8 @@ void sensors_task(void *param) {
     //? ONLY 2-DIM ?
 
     attitude attitude = {roll_deg, pitch_deg};
+    get_euler_from_q(&attitude, q0, q1, q2, q3);  
+
     BaseType_t xReturn = xQueueOverwrite(current_attitude_queue, &attitude);
     if (xReturn != pdPASS) {
         ESP_LOGE(pcTaskGetName(NULL), "Failed to overwrite attitude queue");
