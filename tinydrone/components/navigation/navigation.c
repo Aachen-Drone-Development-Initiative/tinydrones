@@ -41,10 +41,12 @@ esp_err_t init_sensors(int i2c_sda, int i2c_scl, MPU6050_Handle* mpu_handle_poin
     return ESP_OK;
 }
 
+//! WTF
+// void get_euler_from_q (attitude *attitude, float q0, float q1, float q2, float q3) const { 
 
-void get_euler_from_q(attitude *attitude, float q0, float q1, float q2, float q3) const {
-    attitude->roll = asinf(-2.0f * (q1 * q3 - q0 * q2)) * 180.0f / (float)M_PI;
-    attitude->pitch = atan2f(2.0f * (q0 * q1 + q2 * q3), q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3) * 180.0f / (float)M_PI;
+void get_euler_from_q (attitude *attitude, float q0, float q1, float q2, float q3) {
+    attitude->roll_deg = asinf(-2.0f * (q1 * q3 - q0 * q2)) * 180.0f / (float)M_PI;
+    attitude->pitch_deg = atan2f(2.0f * (q0 * q1 + q2 * q3), q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3) * 180.0f / (float)M_PI;
 }
 
 
@@ -78,9 +80,12 @@ void sensors_task(void *param) {
     float ax = mpu_data.acc_x;
     float ay = mpu_data.acc_y;
     float az = mpu_data.acc_z;
-    float gx = mpu_data.gyr_x;
-    float gy = mpu_data.gyr_y;
-    float gz = mpu_data.gyr_z;
+    // float gx = mpu_data.gyr_x;
+    // float gy = mpu_data.gyr_y;
+    // float gz = mpu_data.gyr_z;
+    float gx = mpu_data.omega_x;
+    float gy = mpu_data.omega_y;
+    float gz = mpu_data.omega_z;
 
 
 
@@ -101,7 +106,11 @@ void sensors_task(void *param) {
       float _2q0, _2q1, _2q2, _2q3, _4q0, _4q1, _4q2, _8q1, _8q2, q0q0, q1q1, q2q2, q3q3;
 
       // Normalise accelerometer measurement
-      recipNorm = fast_inv_sqrt(ax * ax + ay * ay + az * az);
+      // recipNorm = fast_inv_sqrt(ax * ax + ay * ay + az * az);
+      //! v !
+      // recipNorm = 1.0f / FusionVectorNorm(v);
+      recipNorm = 1.0f / (ax * ax + ay * ay + az * az);
+
       ax *= recipNorm;
       ay *= recipNorm;
       az *= recipNorm;
@@ -128,7 +137,10 @@ void sensors_task(void *param) {
       s2 = 4.0f * q0q0 * q2 + _2q0 * ax + _4q2 * q3q3 - _2q3 * ay - _4q2 + _8q2 * q1q1 +
            _8q2 * q2q2 + _4q2 * az;
       s3 = 4.0f * q1q1 * q3 - _2q1 * ax + 4.0f * q2q2 * q3 - _2q2 * ay;
-      recipNorm = fast_inv_sqrt(s0 * s0 + s1 * s1 + s2 * s2 + s3 * s3); // normalise step magnitude
+      // recipNorm = fast_inv_sqrt(s0 * s0 + s1 * s1 + s2 * s2 + s3 * s3); // normalise step magnitude
+      //! correct v 
+      recipNorm = 1.0f / (s0 * s0 + s1 * s1 + s2 * s2 + s3 * s3);
+      
       s0 *= recipNorm;
       s1 *= recipNorm;
       s2 *= recipNorm;
@@ -142,13 +154,17 @@ void sensors_task(void *param) {
     }
 
     // Integrate rate of change of quaternion to yield quaternion
+    float dt = 1/FREQUENCY_IN_HZ; //? this ?
     q0 += qDot1 * dt;
     q1 += qDot2 * dt;
     q2 += qDot3 * dt;
     q3 += qDot4 * dt;
 
     // Normalise quaternion
-    recipNorm = fast_inv_sqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
+    // recipNorm = fast_inv_sqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
+    //! correct v 
+    recipNorm = 1.0f / (q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
+
     q0 *= recipNorm;
     q1 *= recipNorm;
     q2 *= recipNorm;
