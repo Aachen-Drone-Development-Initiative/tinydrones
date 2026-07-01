@@ -29,12 +29,45 @@
 // else define it as tskNO_AFFINITY
 #define CORE1 ((CONFIG_FREERTOS_NUMBER_OF_CORES > 1) ? 1 : tskNO_AFFINITY)
 
+float p_data, i_data, d_data = 0;
+
 void espnow_update_parameters_callback(const EPacket_C2D_Parameters* epkt_params)
 {
-    const Payload_Named_Value* params = epkt_params->parameters;
-    int16_t param_count = epkt_params->parameter_count;
+    Payload_Named_Value* param = epkt_params->parameters;
+    const int16_t param_count = epkt_params->parameter_count;
 
-    remote_comm_send_log_values(params, param_count);
+    char p_value_name[NAMED_VALUE_NAME_LENGTH] = {'p'};
+    char i_value_name[NAMED_VALUE_NAME_LENGTH] = {'i'};
+    char d_value_name[NAMED_VALUE_NAME_LENGTH] = {'d'};
+
+    remote_comm_expect_parameter(epkt_params, p_value_name, DTYPE_FLOAT32, &p_data);
+    remote_comm_expect_parameter(epkt_params, i_value_name, DTYPE_FLOAT32, &i_data);
+    remote_comm_expect_parameter(epkt_params, d_value_name, DTYPE_FLOAT32, &d_data);
+
+    ESP_LOGI("parameter callback", "p %f", p_data);
+    ESP_LOGI("parameter callback", "i %f", i_data);
+    ESP_LOGI("parameter callback", "d %f", d_data);
+
+    // while (param < epkt_params->parameters + param_count) {
+    //     if (param->dtype == DTYPE_FLOAT32) {
+    //         TaskHandle_t xTaskToNotify
+    //         uint32_t ulValue
+    //         eNotifyAction eAction
+    //         if (strcmp(param->name, p_value_name)) {
+    //             xTaskNotify( TaskHandle_t xTaskToNotify,
+    //                                      uint32_t ulValue,
+    //                                      eNotifyAction eAction );
+    //         } else if (strcmp(param->name, i_value_name)) {
+
+    //         } else if (strcmp(param->name, d_value_name)) {
+
+    //         }
+    //     }
+    //     param++;
+    // }
+
+
+    // remote_comm_send_log_values(params, param_count); // warum eig?
 
     /* for (int i = 0; i < param_count; ++i) */
     /* { */
@@ -93,17 +126,18 @@ static void tinydrone_task(void*)
                                                 (void *)&attitude, ticks_to_wait);
 
             ESP_LOGI("tinydrone_task", "gyro roll %f", attitude.roll_deg);
-            ESP_LOGI("tinydrone_task", "gyro pitch %f", attitude.pitch_deg);
+            // ESP_LOGI("tinydrone_task", "gyro pitch %f", attitude.pitch_deg);
         } else {
             ESP_LOGE("tinydrone_task", "Attitude queue not initialized");
         }
 
         // determine motor signals
-        float u_pitch = pid_control_pitch(attitude.pitch_deg/360.0*2*M_PI, 0.0, 0.5, 0.0, 0.0);
-        float u_roll = pid_control_roll(attitude.roll_deg/360.0*M_PI, 0.0, 0.5, 0.0, 0.0);
+        // float u_pitch = pid_control_pitch(attitude.pitch_deg/360.0*2*M_PI, 0.0, p_data, i_data, d_data);
+        float u_pitch = 0;
+        float u_roll = pid_control_roll(attitude.roll_deg/360.0*M_PI, 0.0, p_data, i_data, d_data);
         ESP_LOGI("tinydrone_task", "pitch control %f", u_pitch);
         ESP_LOGI("tinydrone_task", "roll control %f", u_roll);
-        Control_Inputs control_inputs = {0.0, u_roll, u_pitch, 0.0};
+        Control_Inputs control_inputs = {0.2, u_roll, u_pitch, 0.0};
         Motor_Values motor_values = control_inputs_to_motor_values(control_inputs);
         motor_values = clip_motor_values(motor_values);
         ESP_ERROR_CHECK(set_motor(1, motor_values.motor_value_1));

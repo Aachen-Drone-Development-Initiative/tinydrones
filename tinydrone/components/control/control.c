@@ -47,6 +47,17 @@ Motor_Values clip_motor_values(Motor_Values values) {
 float pid_control_pitch(float pitch, float desired_pitch, float kp, float ki, float kd) {
     static float integral = 0.0f;
     static float previous_error = 0.0f;
+    static float old_kp, old_ki, old_kd = 0;
+
+    // reset for new pid parameters
+    if (kp != old_kp || ki != old_ki || kd != old_kd) {
+        integral = 0.0f;
+        previous_error = 0.0f;
+        old_kp = kp;
+        old_ki = ki;
+        old_kd = kd;
+    }
+
     float error = desired_pitch - pitch;
     integral += error;
     float derivative = error - previous_error;
@@ -58,6 +69,17 @@ float pid_control_pitch(float pitch, float desired_pitch, float kp, float ki, fl
 float pid_control_roll(float roll, float desired_roll, float kp, float ki, float kd) {
     static float integral = 0.0f;
     static float previous_error = 0.0f;
+    static float old_kp, old_ki, old_kd = 0;
+
+    // reset for new pid parameters
+    if (kp != old_kp || ki != old_ki || kd != old_kd) {
+        integral = 0.0f;
+        previous_error = 0.0f;
+        old_kp = kp;
+        old_ki = ki;
+        old_kd = kd;
+    }
+
     float error = desired_roll - roll;
     integral += error;
     float derivative = error - previous_error;
@@ -80,5 +102,3 @@ void shutdown() {
 
     return;
 }
-
-
