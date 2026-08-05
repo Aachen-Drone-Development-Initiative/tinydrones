@@ -8,8 +8,8 @@
 
 // Control inputs
 // static float s_u1; // u1: thrust up
-// static float s_u2; // u2: roll/pitch control axis rotor 2 and 4
-// static float s_u3; // u3: roll/pitch control axis rotor 1 and 3
+// static float s_u2; // u2: pitch control axis rotor 2 and 4
+// static float s_u3; // u3: roll control axis rotor 1 and 3
 // static float s_u4; // u4: yaw control axis
 
 // //rotor forces
@@ -25,12 +25,12 @@ Motor_Values control_inputs_to_motor_values(Control_Inputs inputs)
     // inverse:
     // lgs: u1 = f1 + f2 + f3 + f4
     // lgs: u2 = -f2 + f4
-    // lgs: u3 = f1 - f3
+    // lgs: u3 = - f1 + f3
     // lgs: u4 = f1 + -f2 + f3 - f4
     Motor_Values motor_values = {
-        .motor_value_1 = 0.25f * inputs.u1 + 0.5f * inputs.u3 + 0.25f * inputs.u4,
+        .motor_value_1 = 0.25f * inputs.u1 - 0.5f * inputs.u3 + 0.25f * inputs.u4,
         .motor_value_2 = 0.25f * inputs.u1 - 0.5f * inputs.u2 - 0.25f * inputs.u4,
-        .motor_value_3 = 0.25f * inputs.u1 - 0.5f * inputs.u3 + 0.25f * inputs.u4,
+        .motor_value_3 = 0.25f * inputs.u1 + 0.5f * inputs.u3 + 0.25f * inputs.u4,
         .motor_value_4 = 0.25f * inputs.u1 + 0.5f * inputs.u2 - 0.25f * inputs.u4
     };
     return motor_values;

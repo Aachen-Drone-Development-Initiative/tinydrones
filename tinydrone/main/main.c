@@ -132,12 +132,13 @@ static void tinydrone_task(void*)
         }
 
         // determine motor signals
-        // float u_pitch = pid_control_pitch(attitude.pitch_deg/360.0*2*M_PI, 0.0, p_data, i_data, d_data);
-        float u_pitch = 0;
-        float u_roll = pid_control_roll(attitude.roll_deg/360.0*M_PI, 0.0, p_data, i_data, d_data);
+        float u_pitch = pid_control_pitch(attitude.pitch_deg/360.0*2*M_PI, 0.0, p_data, i_data, d_data);
+        // float u_pitch = 0;
+        // float u_roll = pid_control_roll(attitude.roll_deg/360.0*M_PI, 0.0, p_data, i_data, d_data);
+        float u_roll = 0;
         ESP_LOGI("tinydrone_task", "pitch control %f", u_pitch);
         ESP_LOGI("tinydrone_task", "roll control %f", u_roll);
-        Control_Inputs control_inputs = {0.2, u_roll, u_pitch, 0.0};
+        Control_Inputs control_inputs = {0.2, u_pitch, u_roll, 0.0};
         Motor_Values motor_values = control_inputs_to_motor_values(control_inputs);
         motor_values = clip_motor_values(motor_values);
         ESP_ERROR_CHECK(set_motor(1, motor_values.motor_value_1));
